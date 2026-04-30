@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build:gh": "vite build --base=/mobile/",
+    "build:gh": "vite build --base=./",
     "build": "vite build",
     "dev": "vite"
   },

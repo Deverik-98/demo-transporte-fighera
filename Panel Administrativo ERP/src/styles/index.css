@@ -1,0 +1,57 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+.map-trip-pin-wrapper {
+  background: transparent;
+  border: 0;
+}
+
+.map-trip-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-trip-truck {
+  font-size: 14px;
+  line-height: 1;
+  filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.5));
+  animation: truck-pulse 1.8s ease-in-out infinite;
+}
+
+.map-trip-label {
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: rgba(9, 9, 11, 0.82);
+  border: 1px solid rgba(161, 161, 170, 0.35);
+  color: #fafafa;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1024px) {
+  .map-trip-label {
+    display: none;
+  }
+}
+
+.leaflet-container {
+  z-index: 0;
+}
+
+.leaflet-pane,
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 10;
+}
+
+@keyframes truck-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}

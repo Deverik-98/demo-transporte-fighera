@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932" role="img" aria-labelledby="titulo desc">
+  <title id="titulo">Modal Incidencias Wireframe</title>
+  <desc id="desc">Wireframe low-fidelity mobile-first para bottom sheet de incidencias</desc>
+  <rect x="0" y="0" width="430" height="932" fill="#eeeeee"/>
+  <rect x="0" y="0" width="430" height="932" fill="#000000" opacity="0.25"/>
+
+  <rect x="0" y="410" width="430" height="522" fill="#f5f5f5" stroke="#9e9e9e"/>
+  <rect x="180" y="424" width="70" height="6" rx="3" fill="#b0b0b0"/>
+  <text x="18" y="462" font-family="Arial, sans-serif" font-size="19" fill="#4a4a4a">Reportar incidencia</text>
+
+  <rect x="18" y="478" width="394" height="52" fill="#dddddd" stroke="#989898"/>
+  <text x="34" y="510" font-family="Arial, sans-serif" font-size="14" fill="#575757">Tipo: Accidente / Retraso / Desvio</text>
+  <rect x="18" y="540" width="394" height="120" fill="#ffffff" stroke="#989898"/>
+  <text x="34" y="570" font-family="Arial, sans-serif" font-size="14" fill="#676767">Descripcion (Lorem ipsum dolor sit amet...)</text>
+  <rect x="18" y="670" width="394" height="86" fill="#e3e3e3" stroke="#999999" stroke-dasharray="8,6"/>
+  <text x="124" y="718" font-family="Arial, sans-serif" font-size="14" fill="#666666">Placeholder adjunto foto/video</text>
+  <rect x="18" y="768" width="190" height="52" fill="#d5d5d5" stroke="#939393"/>
+  <text x="78" y="800" font-family="Arial, sans-serif" font-size="14" fill="#555555">Cancelar</text>
+  <rect x="222" y="768" width="190" height="52" fill="#cfcfcf" stroke="#8e8e8e"/>
+  <text x="280" y="800" font-family="Arial, sans-serif" font-size="14" fill="#555555">Enviar</text>
+</svg>

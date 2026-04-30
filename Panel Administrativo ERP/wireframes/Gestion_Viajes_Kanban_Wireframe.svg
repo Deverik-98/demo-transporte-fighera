@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="titulo desc">
+  <title id="titulo">Gestion Viajes Kanban Wireframe</title>
+  <desc id="desc">Wireframe low-fidelity monocromo para gestion de viajes en columnas de estado</desc>
+  <rect x="0" y="0" width="1440" height="900" fill="#f4f4f4"/>
+  <rect x="0" y="0" width="1440" height="72" fill="#dadada" stroke="#9e9e9e"/>
+  <text x="24" y="45" font-family="Arial, sans-serif" font-size="22" fill="#4a4a4a">Gestion de Viajes - Vista Kanban</text>
+
+  <rect x="24" y="92" width="1392" height="66" fill="#ededed" stroke="#b0b0b0"/>
+  <rect x="40" y="108" width="260" height="34" fill="#ffffff" stroke="#9e9e9e"/>
+  <text x="52" y="130" font-family="Arial, sans-serif" font-size="13" fill="#666666">Buscar viaje o chofer</text>
+  <rect x="314" y="108" width="220" height="34" fill="#ffffff" stroke="#9e9e9e"/>
+  <text x="326" y="130" font-family="Arial, sans-serif" font-size="13" fill="#666666">Filtro zona</text>
+  <rect x="548" y="108" width="220" height="34" fill="#ffffff" stroke="#9e9e9e"/>
+  <text x="560" y="130" font-family="Arial, sans-serif" font-size="13" fill="#666666">Filtro estado</text>
+  <rect x="1220" y="104" width="176" height="40" fill="#cecece" stroke="#8f8f8f"/>
+  <text x="1252" y="129" font-family="Arial, sans-serif" font-size="14" fill="#4a4a4a">Nuevo viaje</text>
+
+  <rect x="24" y="176" width="220" height="700" fill="#efefef" stroke="#9d9d9d"/>
+  <text x="40" y="206" font-family="Arial, sans-serif" font-size="16" fill="#4a4a4a">Asignado</text>
+  <rect x="40" y="220" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+  <rect x="40" y="352" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+
+  <rect x="256" y="176" width="220" height="700" fill="#efefef" stroke="#9d9d9d"/>
+  <text x="272" y="206" font-family="Arial, sans-serif" font-size="16" fill="#4a4a4a">En Planta</text>
+  <rect x="272" y="220" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+
+  <rect x="488" y="176" width="220" height="700" fill="#efefef" stroke="#9d9d9d"/>
+  <text x="504" y="206" font-family="Arial, sans-serif" font-size="16" fill="#4a4a4a">Cargando</text>
+  <rect x="504" y="220" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+  <rect x="504" y="352" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+
+  <rect x="720" y="176" width="220" height="700" fill="#efefef" stroke="#9d9d9d"/>
+  <text x="736" y="206" font-family="Arial, sans-serif" font-size="16" fill="#4a4a4a">En Ruta</text>
+  <rect x="736" y="220" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+  <rect x="736" y="352" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+
+  <rect x="952" y="176" width="220" height="700" fill="#efefef" stroke="#9d9d9d"/>
+  <text x="968" y="206" font-family="Arial, sans-serif" font-size="16" fill="#4a4a4a">Entregado</text>
+  <rect x="968" y="220" width="188" height="120" fill="#dfdfdf" stroke="#9e9e9e" stroke-dasharray="6,4"/>
+
+  <rect x="1184" y="176" width="232" height="700" fill="#efefef" stroke="#9d9d9d"/>
+  <text x="1200" y="206" font-family="Arial, sans-serif" font-size="16" fill="#4a4a4a">Detalle seleccionado</text>
+  <rect x="1200" y="224" width="200" height="640" fill="#e3e3e3" stroke="#9e9e9e" stroke-dasharray="8,6"/>
+  <text x="1238" y="546" font-family="Arial, sans-serif" font-size="14" fill="#666666">Placeholder info viaje</text>
+</svg>

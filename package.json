@@ -1,0 +1,12 @@
+{
+  "name": "transporte-fighera-prototipos",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "install:all": "npm install --prefix \"Panel Administrativo ERP\" && npm install --prefix \"Prototipo App Choferes Transporte\"",
+    "build:admin:gh": "npm run build:gh --prefix \"Panel Administrativo ERP\"",
+    "build:mobile:gh": "npm run build:gh --prefix \"Prototipo App Choferes Transporte\"",
+    "build:gh": "npm run build:admin:gh && npm run build:mobile:gh && node ./scripts/prepare-gh-pages.mjs"
+  }
+}

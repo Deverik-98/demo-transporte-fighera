@@ -1,0 +1,58 @@
+name: Deploy Prototipos to GitHub Pages
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            Panel Administrativo ERP/package-lock.json
+            Prototipo App Choferes Transporte/package-lock.json
+
+      - name: Install admin dependencies
+        run: npm ci
+        working-directory: Panel Administrativo ERP
+
+      - name: Install mobile dependencies
+        run: npm ci
+        working-directory: Prototipo App Choferes Transporte
+
+      - name: Build admin and mobile for Pages
+        run: npm run build:gh
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: gh-pages-dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

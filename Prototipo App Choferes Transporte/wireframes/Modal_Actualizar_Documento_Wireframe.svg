@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="430" height="932" viewBox="0 0 430 932" role="img">
+  <rect width="430" height="932" fill="#000" opacity="0.4"/>
+  <rect x="18" y="172" width="394" height="588" fill="#f5f5f5" stroke="#9e9e9e"/>
+  <text x="34" y="210" font-family="Arial" font-size="18" fill="#4a4a4a">Renovar documento</text>
+  <rect x="34" y="232" width="362" height="260" fill="#e1e1e1" stroke="#999" stroke-dasharray="8,6"/>
+  <text x="108" y="370" font-family="Arial" font-size="14" fill="#666">Selector archivo PDF/JPG/PNG</text>
+  <rect x="34" y="508" width="174" height="52" fill="#d6d6d6" stroke="#949494"/>
+  <rect x="222" y="508" width="174" height="52" fill="#cfcfcf" stroke="#8e8e8e"/>
+</svg>

@@ -1,0 +1,51 @@
+# Git Flow obligatorio para este repo (Transporte Fighera)
+
+## Objetivo
+- Mantener `master` siempre desplegable para clientes.
+- Integrar cambios en `develop` antes de publicar.
+- Trabajar nuevas funcionalidades en ramas `feature/*`.
+- Resolver urgencias de producción en `hotfix/*`.
+
+## Política de ramas
+- `master`: produccion (GitHub Pages publico).
+- `develop`: integracion y QA interno.
+- `feature/<nombre-corto>`: nuevas mejoras.
+- `hotfix/<nombre-corto>`: correcciones urgentes de produccion.
+
+## Flujo obligatorio de trabajo
+1. Partir desde `develop` actualizado para nuevas features.
+2. Crear rama `feature/*`.
+3. Implementar cambios y validar build local.
+4. Abrir PR `feature/* -> develop`.
+5. Tras QA aprobado, abrir PR `develop -> master`.
+6. Merge a `master` dispara deploy publico.
+
+## Flujo hotfix
+1. Partir desde `master`.
+2. Crear `hotfix/*`.
+3. Corregir y validar.
+4. PR `hotfix/* -> master` (publicacion urgente).
+5. PR `hotfix/* -> develop` para mantener sincronia entre ramas.
+
+## Reglas para el agente (siempre)
+- Nunca hacer push directo a `master` salvo instruccion explicita del usuario.
+- Priorizar cambios en `feature/*` y PR a `develop`.
+- Antes de pedir merge a `master`, validar:
+  - build admin y mobile exitoso,
+  - sincronia localStorage entre `/admin` y `/mobile`,
+  - flujo de reset demo global funcionando.
+- Mantener ambos prototipos en el mismo origen para sincronia de datos.
+- Si una tarea afecta modelo de datos compartido, actualizar Admin + Mobile en la misma iteracion.
+
+## Convencion de commits
+- `feat:` nuevas funcionalidades
+- `fix:` correcciones
+- `refactor:` mejoras estructurales sin cambio funcional
+- `docs:` documentacion o guias
+- `chore:` tareas de mantenimiento/pipeline
+
+## Checklist previo a publicar
+- [ ] Cambios integrados en `develop`.
+- [ ] Pruebas locales de `/admin` y `/mobile` OK.
+- [ ] Build GitHub Pages (`npm run build:gh`) OK.
+- [ ] PR `develop -> master` aprobado.

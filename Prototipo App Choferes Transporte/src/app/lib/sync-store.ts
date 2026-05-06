@@ -41,6 +41,7 @@ export type SyncAlert = {
 
 export const TRIPS_KEY = "tf_sync_trips_v1";
 export const ALERTS_KEY = "tf_sync_alerts_v1";
+export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
 export const DOCUMENTS_KEY = "tf_sync_documents_v1";
 export const RESET_REQUEST_KEY = "tf_sync_reset_request_v1";
@@ -81,6 +82,10 @@ export function setSyncAlerts(next: SyncAlert[]) {
 
 export function getSyncVehicles<T>() {
   return readJson<T[]>(VEHICLES_KEY, []);
+}
+
+export function getSyncUsers<T>() {
+  return readJson<T[]>(USERS_KEY, []);
 }
 
 export function getSyncDocuments<T>() {

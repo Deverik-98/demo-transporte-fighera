@@ -29,7 +29,7 @@ export function TripStageStepper({
           const done = idx <= currentIndex;
           return (
             <div key={step.id} className="flex items-center gap-2 text-xs">
-              {done ? <CheckCircle2 className="h-4 w-4 text-green-600" /> : <Circle className="h-4 w-4 text-slate-300" />}
+              {done ? <CheckCircle2 className="h-4 w-4 text-blue-500" /> : <Circle className="h-4 w-4 text-slate-300" />}
               <span className={done ? "text-slate-800" : "text-slate-500"}>{step.label}</span>
             </div>
           );
@@ -38,7 +38,7 @@ export function TripStageStepper({
       {next && (
         <button
           onClick={() => onAdvance(next.id)}
-          className="mt-3 w-full rounded-lg bg-blue-600 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+          className="mt-3 w-full rounded-lg bg-blue-500 py-2 text-xs font-semibold text-white hover:bg-blue-600"
         >
           Registrar: {next.label}
         </button>

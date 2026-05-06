@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   Coffee,
+  FlaskConical,
   FileBadge,
   FileText,
   Fuel,
@@ -21,6 +22,7 @@ import {
   Truck,
   Upload,
   User,
+  Wrench,
   Wifi,
   WifiOff,
   X,
@@ -34,12 +36,34 @@ import { LatLngExpression, divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { toast } from 'sonner';
 import { TripStage, TripStageStepper } from './components/modules/TripStageStepper';
-import { appendCriticalAlert, getSyncDocuments, getSyncTrips, getSyncVehicles, requestGlobalDemoReset, setSyncTrips, SyncTrip } from './lib/sync-store';
+import { appendCriticalAlert, getSyncDocuments, getSyncTrips, getSyncUsers, getSyncVehicles, requestGlobalDemoReset, setSyncTrips, SyncTrip } from './lib/sync-store';
 
 type TripStatus = 'asignado' | 'aceptado' | 'en-planta' | 'en-ruta' | 'completado' | 'cancelado';
 type Screen = 'ruta' | 'historial' | 'rrhh' | 'perfil';
-type RouteEventType = 'incidente' | 'retraso' | 'desvio';
-type ExpenseCategory = 'peaje' | 'combustible' | 'viatico';
+type RouteEventType = 'incidente' | 'retraso' | 'desvio' | 'parada';
+type ExpenseCategory = 'peajes' | 'combustible' | 'gomeria' | 'fitosanitario' | 'otros';
+
+const expenseCategoryLabels: Record<ExpenseCategory, string> = {
+  peajes: 'Peajes',
+  combustible: 'Combustible',
+  gomeria: 'Gomería',
+  fitosanitario: 'Fitosanitario',
+  otros: 'Otros'
+};
+
+const routeEventMeta: Record<RouteEventType, { label: string; helper: string }> = {
+  incidente: { label: 'Incidente', helper: 'Accidente, riesgo o situación crítica' },
+  retraso: { label: 'Retraso', helper: 'Demora operativa por carga, tránsito o espera' },
+  desvio: { label: 'Desvío', helper: 'Cambio no planificado de la ruta asignada' },
+  parada: { label: 'Parada', helper: 'Detención operativa o técnica en ruta' },
+};
+
+type RoutePushReminder = {
+  tripId: string;
+  type: Extract<RouteEventType, 'desvio' | 'parada'>;
+  title: string;
+  description: string;
+};
 
 interface Trip {
   id: string;
@@ -84,6 +108,15 @@ interface VehicleDocument {
   status: 'vigente' | 'proximo' | 'vencido';
   expiresAt: string;
 }
+
+type SyncedUserRecord = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  zoneId?: 'zona-argentina' | 'zona-uruguay';
+};
 
 function getPositionByProgress(path: LatLngExpression[], progress: number): LatLngExpression {
   if (path.length < 2) return path[0];
@@ -174,10 +207,22 @@ function normalizePlate(plate: string) {
   return plate.replace(/-/g, '').toUpperCase();
 }
 
+function parseTripScheduleToMs(value: string) {
+  const asDate = new Date(value);
+  if (!Number.isNaN(asDate.getTime())) return asDate.getTime();
+  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (match) {
+    const [, dd, mm, yyyy, hh, min] = match;
+    const parsed = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min));
+    return parsed.getTime();
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
 const initialMobileTrips: Trip[] = [
   {
     id: 'VJ-2026-001234',
-    driver: 'Juan Martínez',
+    driver: 'Juan Pérez',
     zoneId: 'zona-argentina',
     stage: 'aceptado',
     vehiclePlate: 'AB-123-CD',
@@ -202,7 +247,7 @@ const initialMobileTrips: Trip[] = [
   },
   {
     id: 'VJ-2026-001235',
-    driver: 'Juan Martínez',
+    driver: 'Juan Pérez',
     zoneId: 'zona-argentina',
     stage: 'aceptado',
     vehiclePlate: 'AC-987-ZT',
@@ -229,7 +274,7 @@ const initialMobileTrips: Trip[] = [
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loginEmail, setLoginEmail] = useState('chofer@fighera.com');
+  const [loginEmail, setLoginEmail] = useState('juan.perez@transportefighera.com');
   const [loginPassword, setLoginPassword] = useState('123456');
   const [currentDriverName, setCurrentDriverName] = useState('Juan Pérez');
   const previousTripIdsRef = useRef<string[]>([]);
@@ -246,15 +291,20 @@ export default function App() {
   const [photoType, setPhotoType] = useState<'remito-inicial' | 'remito-final'>('remito-inicial');
   const [selectedReceipt, setSelectedReceipt] = useState<string | null>(null);
   const [expenseAmount, setExpenseAmount] = useState('');
-  const [expenseCategory, setExpenseCategory] = useState<ExpenseCategory>('peaje');
+  const [expenseCategory, setExpenseCategory] = useState<ExpenseCategory>('peajes');
   const [expenseTicketRawKb, setExpenseTicketRawKb] = useState<number | null>(null);
   const [expenseTicketFinalKb, setExpenseTicketFinalKb] = useState<number | null>(null);
   const [remitoRawKb, setRemitoRawKb] = useState<number | null>(null);
   const [remitoFinalKb, setRemitoFinalKb] = useState<number | null>(null);
   const [showDocumentUpload, setShowDocumentUpload] = useState<string | null>(null);
+  const [selectedEvidenceUpdate, setSelectedEvidenceUpdate] = useState<{ tripId: string; evidenceIndex: number } | null>(null);
   const [eventDescription, setEventDescription] = useState('');
+  const [selectedRouteEventType, setSelectedRouteEventType] = useState<RouteEventType | null>(null);
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<string[]>([]);
   const [showVehicleDocsModal, setShowVehicleDocsModal] = useState(false);
+  const [routePushReminder, setRoutePushReminder] = useState<RoutePushReminder | null>(null);
+  const lastPushReminderKeyRef = useRef<string | null>(null);
+  const lastRouteEventReportAtRef = useRef<Record<string, number>>({});
   const [fallbackVehicleDocuments] = useState<VehicleDocument[]>([
     { id: 'VD-001', vehiclePlate: 'AB-123-CD', documentType: 'VTV', fileName: 'vtv_ab123cd.pdf', status: 'vigente', expiresAt: '2026-12-10' },
     { id: 'VD-002', vehiclePlate: 'AB-123-CD', documentType: 'Seguro del Vehículo', fileName: 'seguro_ab123cd.pdf', status: 'proximo', expiresAt: '2026-05-20' },
@@ -267,6 +317,7 @@ export default function App() {
   ]);
   const [syncedVehicleRecords, setSyncedVehicleRecords] = useState<Array<{ id: string; plate: string }>>([]);
   const [syncedDocumentRecords, setSyncedDocumentRecords] = useState<Array<{ entityType: string; entityId: string; documentType: string; fileName: string; expiresAt: string; status?: string }>>([]);
+  const [syncedUserRecords, setSyncedUserRecords] = useState<SyncedUserRecord[]>([]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -298,12 +349,31 @@ export default function App() {
     { id: 'rec-02', mes: 'Febrero 2026', fecha: '28/02/2026', firmado: true },
   ]);
 
-  const driverProfiles = [
-    { email: 'chofer@fighera.com', driverName: 'Juan Pérez' },
-    { email: 'maria.gonzalez@transportefighera.com', driverName: 'María González' },
-    { email: 'carlos.rodriguez@transportefighera.com', driverName: 'Carlos Rodríguez' },
-    { email: 'diego.fernandez@transportefighera.com', driverName: 'Diego Fernández' }
-  ];
+  const driverProfiles = useMemo(
+    () => {
+      const syncedDrivers = syncedUserRecords
+        .filter((user) => user.role === 'Chofer' && user.status === 'Activo')
+        .map((user) => ({ email: user.email.toLowerCase(), driverName: user.name }));
+      if (syncedDrivers.length) return syncedDrivers;
+      return [{ email: 'juan.perez@transportefighera.com', driverName: 'Juan Pérez' }];
+    },
+    [syncedUserRecords]
+  );
+
+  const activeDriverProfile = useMemo(
+    () => driverProfiles.find((profile) => profile.driverName === currentDriverName) ?? null,
+    [currentDriverName, driverProfiles]
+  );
+  const driverInitials = useMemo(
+    () =>
+      currentDriverName
+        .split(' ')
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? '')
+        .join('') || 'CH',
+    [currentDriverName]
+  );
 
   const vehicleDocuments = useMemo<VehicleDocument[]>(() => {
     if (!syncedVehicleRecords.length || !syncedDocumentRecords.length) return fallbackVehicleDocuments;
@@ -341,12 +411,14 @@ export default function App() {
 
   useEffect(() => {
     const synced = getSyncTrips();
-    if (!synced.length) return;
-    setTrips(synced.map(mapSyncToMobileTrip));
+    setSyncedUserRecords(getSyncUsers<SyncedUserRecord>());
     setSyncedVehicleRecords(getSyncVehicles<{ id: string; plate: string }>());
     setSyncedDocumentRecords(
       getSyncDocuments<{ entityType: string; entityId: string; documentType: string; fileName: string; expiresAt: string; status?: string }>()
     );
+    if (synced.length) {
+      setTrips(synced.map(mapSyncToMobileTrip));
+    }
   }, []);
 
   useEffect(() => {
@@ -358,6 +430,9 @@ export default function App() {
     const onStorageCollections = (event: StorageEvent) => {
       if (event.key === 'tf_sync_vehicles_v1') {
         setSyncedVehicleRecords(getSyncVehicles<{ id: string; plate: string }>());
+      }
+      if (event.key === 'tf_sync_users_v1') {
+        setSyncedUserRecords(getSyncUsers<SyncedUserRecord>());
       }
       if (event.key === 'tf_sync_documents_v1') {
         setSyncedDocumentRecords(
@@ -372,6 +447,14 @@ export default function App() {
       window.removeEventListener('storage', onStorageCollections);
     };
   }, []);
+
+  useEffect(() => {
+    const currentLogin = loginEmail.trim().toLowerCase();
+    const profile = driverProfiles.find((item) => item.email === currentLogin);
+    if (profile && profile.driverName !== currentDriverName) {
+      setCurrentDriverName(profile.driverName);
+    }
+  }, [currentDriverName, driverProfiles, loginEmail]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -462,8 +545,19 @@ export default function App() {
           trip.driver === currentDriverName &&
           trip.estado !== 'completado' &&
           trip.estado !== 'cancelado'
-      ),
+      )
+      .sort((a, b) => {
+        const aInProgress = a.estado === 'en-ruta' ? 1 : 0;
+        const bInProgress = b.estado === 'en-ruta' ? 1 : 0;
+        if (aInProgress !== bInProgress) return bInProgress - aInProgress;
+        return parseTripScheduleToMs(a.fechaProgramada) - parseTripScheduleToMs(b.fechaProgramada);
+      }),
     [currentDriverName, trips]
+  );
+
+  const hasTripInProgress = useMemo(
+    () => pendingTrips.some((trip) => trip.estado === 'en-ruta'),
+    [pendingTrips]
   );
 
   useEffect(() => {
@@ -506,6 +600,51 @@ export default function App() {
   }, [activeTripId, trips]);
 
   useEffect(() => {
+    const selected = trips.find((trip) => trip.id === activeTripId);
+    if (!selected || selected.estado !== 'en-ruta') {
+      setRoutePushReminder(null);
+      return;
+    }
+    const lastReportAt = lastRouteEventReportAtRef.current[selected.id] ?? 0;
+    if (Date.now() - lastReportAt < 4000) {
+      return;
+    }
+    const hasReportedDeviation = selected.alertas.some((alerta) => alerta.tipo === 'desvio');
+    const hasReportedStop = selected.alertas.some((alerta) => alerta.tipo === 'parada');
+
+    const nextReminder: RoutePushReminder | null =
+      selected.progress >= 30 && !hasReportedStop
+        ? {
+            tripId: selected.id,
+            type: 'parada',
+            title: 'Hemos detectado una parada extendida',
+            description: 'Si la detención no estaba planificada, reporta Parada para informar a operaciones.',
+          }
+        : selected.progress >= 12 && !hasReportedDeviation
+          ? {
+              tripId: selected.id,
+              type: 'desvio',
+              title: 'Hemos detectado un desvío de tu ruta',
+              description: 'Reporta Desvío para actualizar a operaciones en tiempo real.',
+            }
+          : null;
+
+    setRoutePushReminder(nextReminder);
+
+    if (nextReminder) {
+      const reminderKey = `${nextReminder.tripId}-${nextReminder.type}`;
+      if (lastPushReminderKeyRef.current !== reminderKey) {
+        lastPushReminderKeyRef.current = reminderKey;
+        toast.warning(nextReminder.title, {
+          description: nextReminder.description,
+        });
+      }
+    } else {
+      lastPushReminderKeyRef.current = null;
+    }
+  }, [activeTripId, trips]);
+
+  useEffect(() => {
     setSyncTrips(trips.map(mapTripToSync));
   }, [trips]);
 
@@ -519,6 +658,12 @@ export default function App() {
   });
 
   const handleAcceptTrip = (tripId: string) => {
+    const tripToAccept = trips.find((trip) => trip.id === tripId);
+    if (!tripToAccept) return;
+    if (hasTripInProgress && tripToAccept.estado === 'asignado') {
+      toast.error('Ya tienes un viaje en curso. Finalízalo antes de aceptar otro.');
+      return;
+    }
     updateTrip(tripId, (trip) => appendTimeline({ ...trip, estado: 'aceptado', stage: 'aceptado' }, 'Chofer aceptó el viaje.'));
     setActiveTripId(tripId);
     toast.success('Viaje aceptado. Revisa la ruta y presiona iniciar.');
@@ -531,6 +676,15 @@ export default function App() {
     setActiveTripId(tripId);
     setShowMapScreen(true);
     toast.success('Viaje en curso. Se activó monitoreo GPS.');
+  };
+
+  const handleStartAssignedTrip = (tripId: string) => {
+    const trip = trips.find((item) => item.id === tripId);
+    if (!trip) return;
+    if (trip.estado === 'asignado') {
+      handleAcceptTrip(tripId);
+    }
+    handleStartTrip(tripId);
   };
 
   const handlePhotoCapture = (tripId: string | null) => {
@@ -583,6 +737,14 @@ export default function App() {
     }
   };
 
+  const handleClosePhotoModal = () => {
+    if (photoType === 'remito-final') {
+      toast.error('La foto del remito conformado es obligatoria para finalizar el viaje.');
+      return;
+    }
+    setShowPhotoModal(false);
+  };
+
   const handleArrival = (tripId: string) => {
     updateTrip(tripId, (trip) => appendTimeline({ ...trip, progress: 95 }, 'Llegada a destino confirmada.'));
     setPhotoType('remito-final');
@@ -591,14 +753,15 @@ export default function App() {
 
   const handleRouteEvent = (tripId: string | null, type: RouteEventType) => {
     if (!tripId) return;
-    if (!eventDescription.trim()) {
-      toast.error('Agrega un detalle breve del evento');
+    if (eventDescription.trim().length < 8) {
+      toast.error('Agrega un detalle breve (mínimo 8 caracteres).');
       return;
     }
     const messages = {
       incidente: 'Incidente reportado al panel operativo.',
       retraso: 'Retraso registrado con notificación a tráfico.',
-      desvio: 'Desvío informado y compartido con operaciones.'
+      desvio: 'Desvío informado y compartido con operaciones.',
+      parada: 'Parada reportada para seguimiento operativo.',
     };
 
     updateTrip(tripId, (trip) => ({
@@ -622,8 +785,19 @@ export default function App() {
         vehiclePlate: trip.vehiclePlate,
       });
     }
+    if (type === 'desvio' || type === 'parada') {
+      if (tripId) {
+        lastRouteEventReportAtRef.current[tripId] = Date.now();
+      }
+      setRoutePushReminder((prev) => {
+        if (!prev || prev.tripId !== tripId || prev.type !== type) return prev;
+        return null;
+      });
+      lastPushReminderKeyRef.current = null;
+    }
     setShowIncidentModal(false);
     setEventDescription('');
+    setSelectedRouteEventType(null);
 
     if (!isOnline) {
       toast.info('Sin conexión. Se sincronizará cuando vuelvas online.');
@@ -675,9 +849,9 @@ export default function App() {
     }
 
     updateTrip(activeTripId, (trip) =>
-      appendTimeline(trip, `Gasto registrado: ${expenseCategory} por $${expenseAmount}`)
+      appendTimeline(trip, `Gasto registrado: ${expenseCategoryLabels[expenseCategory]} por $${expenseAmount}`)
     );
-    toast.success(`Gasto de $${expenseAmount} registrado en ${expenseCategory}`);
+    toast.success(`Gasto de $${expenseAmount} registrado en ${expenseCategoryLabels[expenseCategory]}`);
     setShowExpenseModal(false);
     setExpenseAmount('');
     setExpenseTicketRawKb(null);
@@ -705,12 +879,36 @@ export default function App() {
     setShowDocumentUpload(null);
   };
 
+  const handleTripEvidenceUpdate = () => {
+    if (!selectedEvidenceUpdate) return;
+    const { tripId, evidenceIndex } = selectedEvidenceUpdate;
+    updateTrip(tripId, (trip) => {
+      const targetEvidence = trip.evidencias[evidenceIndex];
+      if (!targetEvidence) return trip;
+      const nextEvidence = [...trip.evidencias];
+      nextEvidence[evidenceIndex] = {
+        ...targetEvidence,
+        nombre: `${targetEvidence.tipo}-actualizado-${trip.id}.jpg`,
+        fecha: new Date().toLocaleString('es-AR')
+      };
+      return appendTimeline(
+        {
+          ...trip,
+          evidencias: nextEvidence
+        },
+        `Documento actualizado: ${targetEvidence.tipo}`
+      );
+    });
+    toast.success('Remito actualizado correctamente');
+    setSelectedEvidenceUpdate(null);
+  };
+
   const handleProfileDocumentDownload = (doc: Document) => {
     toast.success(`${doc.tipo} descargado`);
   };
 
   const getDocumentStatusColor = (estado: string) => {
-    return estado === 'verde' ? 'bg-green-500' : estado === 'amarillo' ? 'bg-yellow-500' : 'bg-red-500';
+    return estado === 'verde' ? 'bg-blue-500' : estado === 'amarillo' ? 'bg-slate-500' : 'bg-slate-700';
   };
 
   const toggleTripExpanded = (tripId: string) => {
@@ -720,6 +918,11 @@ export default function App() {
   const handleDownloadVehicleDocument = (tripId: string, document: VehicleDocument) => {
     updateTrip(tripId, (trip) => appendTimeline(trip, `Documento descargado: ${document.documentType} (${document.fileName})`));
     toast.success(`${document.documentType} descargado`);
+  };
+
+  const openIncidentModal = (preselectedType: RouteEventType = 'incidente') => {
+    setSelectedRouteEventType(preselectedType);
+    setShowIncidentModal(true);
   };
 
   const handleResetDemoMobile = () => {
@@ -783,7 +986,7 @@ export default function App() {
   return (
     <div className="max-w-md mx-auto h-[100dvh] relative overflow-hidden bg-gray-50 shadow-2xl flex flex-col">
       {/* Top Bar */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-3 flex items-center justify-between shadow-lg">
+      <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-lg">
         <div className="flex items-center gap-3">
           <Truck className="w-6 h-6" />
           <div>
@@ -798,7 +1001,7 @@ export default function App() {
             transition={{ repeat: Infinity, duration: 2 }}
             className="flex items-center gap-1"
           >
-            <Navigation className={`w-4 h-4 ${activeTrip?.estado === 'en-ruta' ? 'text-green-300' : 'text-slate-300'}`} />
+            <Navigation className={`w-4 h-4 ${activeTrip?.estado === 'en-ruta' ? 'text-blue-200' : 'text-slate-300'}`} />
             <span className="text-xs">{activeTrip?.estado === 'en-ruta' ? 'GPS ON' : 'GPS STBY'}</span>
           </motion.div>
 
@@ -826,7 +1029,7 @@ export default function App() {
         <motion.div
           initial={{ y: -50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="bg-yellow-500 text-black px-4 py-2 text-sm font-medium text-center"
+          className="bg-slate-200 text-slate-700 px-4 py-2 text-sm font-medium text-center"
         >
           ⚠️ Sin conexión. Guardando datos localmente...
         </motion.div>
@@ -853,7 +1056,7 @@ export default function App() {
               {!showMapScreen && pendingTrips.map((trip) => {
                 const isExpanded = expandedTripIds.includes(trip.id);
                 const isInProgress = trip.estado === 'en-ruta';
-                const canStart = trip.estado === 'aceptado';
+                const canStartNow = !isInProgress && !hasTripInProgress;
                 return (
                   <div key={trip.id} className="bg-white rounded-xl shadow-lg mb-3 overflow-hidden">
                     <button onClick={() => toggleTripExpanded(trip.id)} className="w-full p-4 text-left flex items-center justify-between">
@@ -878,10 +1081,22 @@ export default function App() {
                             <p><span className="font-semibold">Distancia:</span> {trip.distancia} · ETA {trip.eta}</p>
                             <p><span className="font-semibold">Plan:</span> {trip.plan}</p>
                           </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <button onClick={() => { setActiveTripId(trip.id); setShowMapScreen(true); }} className="py-2 rounded-lg bg-slate-200 text-slate-700 text-xs font-semibold flex items-center justify-center gap-1"><Map className="w-4 h-4" /> Mapa</button>
-                            <button onClick={() => handleAcceptTrip(trip.id)} disabled={trip.estado !== 'asignado'} className="py-2 rounded-lg bg-blue-500 text-white text-xs font-semibold disabled:bg-gray-300">Aceptar</button>
-                            <button onClick={() => handleStartTrip(trip.id)} disabled={!canStart && !isInProgress} className="py-2 rounded-lg bg-green-500 text-white text-xs font-semibold disabled:bg-gray-300">Iniciar</button>
+                          <div className="grid grid-cols-1 gap-2">
+                            <button
+                              onClick={() => { setActiveTripId(trip.id); setShowMapScreen(true); }}
+                              className="py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-semibold flex items-center justify-center gap-1 hover:bg-blue-100"
+                            >
+                              <Map className="w-4 h-4" /> Mapa
+                            </button>
+                            {!isInProgress && (
+                              <button
+                                onClick={() => handleStartAssignedTrip(trip.id)}
+                                disabled={!canStartNow}
+                                className="py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:bg-gray-300"
+                              >
+                                Iniciar viaje ahora
+                              </button>
+                            )}
                           </div>
                         </motion.div>
                       )}
@@ -899,7 +1114,7 @@ export default function App() {
                           <h3 className="font-bold text-slate-900 text-base">{activeTrip.id}</h3>
                           <p className="text-xs text-slate-500 mt-1">Camion {activeTrip.vehiclePlate}</p>
                         </div>
-                        <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                        <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-700 border border-blue-200">
                           {activeTrip.estado === 'en-ruta' ? 'EN CURSO' : activeTrip.estado.toUpperCase()}
                         </span>
                       </div>
@@ -931,62 +1146,58 @@ export default function App() {
                         Consejo operativo: confirma cada hito apenas ocurra para mantener el seguimiento en tiempo real.
                       </p>
                       {activeTrip.estado !== 'en-ruta' && activeTrip.estado !== 'completado' ? (
-                        <button onClick={() => handleStartTrip(activeTrip.id)} className="w-full bg-green-700 hover:bg-green-800 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors">
+                        <button onClick={() => handleStartTrip(activeTrip.id)} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors">
                           Iniciar viaje ahora
                         </button>
                       ) : (
                         <button
                           onClick={() => handleArrival(activeTrip.id)}
-                          className="w-full bg-blue-700 hover:bg-blue-800 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors"
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors"
                         >
                           Confirmar llegada y cargar evidencia
                         </button>
                       )}
 
+                      {routePushReminder?.tripId === activeTrip.id && (
+                        <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 shadow-sm">
+                          <p className="font-semibold">Notificación de seguridad</p>
+                          <p className="mt-1">{routePushReminder.title}.</p>
+                          <p className="mt-1">{routePushReminder.description}</p>
+                          <button
+                            onClick={() => openIncidentModal(routePushReminder.type)}
+                            className="mt-2 rounded-md bg-blue-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-blue-700"
+                          >
+                            Reportar {routeEventMeta[routePushReminder.type].label.toLowerCase()} ahora
+                          </button>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => openIncidentModal(routePushReminder?.type ?? 'incidente')}
+                        className="mt-2 w-full rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-md transition-colors hover:bg-blue-700"
+                      >
+                        Reportar evento de ruta
+                      </button>
+
                       <div className="grid grid-cols-2 gap-2 mt-2">
                         <button
                           onClick={() => setShowVehicleDocsModal(true)}
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                          className="bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                         >
                           <FileText className="w-4 h-4" />
                           Ver documentos
                         </button>
                         <button
-                          onClick={() => setShowMapScreen(false)}
-                          className="bg-slate-200 hover:bg-slate-300 text-slate-700 py-3 rounded-xl text-sm font-semibold transition-colors"
-                        >
-                          Volver a rutas
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 mt-2">
-                        <button
                           onClick={() => setShowExpenseModal(true)}
-                          className="bg-slate-700 hover:bg-slate-800 text-white py-3 rounded-xl text-sm font-semibold transition-colors"
+                          className="border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 py-3 rounded-xl text-sm font-semibold transition-colors"
                         >
                           Registrar gasto
                         </button>
-                        <button
-                          onClick={() => setShowIncidentModal(true)}
-                          className="bg-amber-600 hover:bg-amber-700 text-white py-3 rounded-xl text-sm font-semibold transition-colors"
-                        >
-                          Reportar evento
-                        </button>
                       </div>
+
                     </div>
                   </div>
 
-                  <div className="bg-white rounded-xl shadow p-4">
-                    <h4 className="font-semibold text-gray-800 mb-2">Timeline operativo</h4>
-                    <div className="space-y-2">
-                      {activeTrip.timeline.slice().reverse().map((item, idx) => (
-                        <div key={`${item.timestamp}-${idx}`} className="text-sm text-gray-700 border-l-2 border-blue-200 pl-3">
-                          <div className="text-xs text-gray-500">{item.timestamp}</div>
-                          <div>{item.descripcion}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 </motion.div>
               )}
             </motion.div>
@@ -1028,7 +1239,7 @@ export default function App() {
                               <div className="text-xs text-gray-500 mt-1">📅 {trip.fechaProgramada} · 🚚 {trip.vehiclePlate}</div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${trip.estado === 'completado' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${trip.estado === 'completado' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-700'}`}>
                                 {trip.estado === 'completado' ? 'Completado' : 'Cancelado'}
                               </span>
                               {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
@@ -1044,7 +1255,7 @@ export default function App() {
                                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
                                       url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
                                     />
-                                    <Polyline positions={trip.routePath} pathOptions={{ color: '#22d3ee', weight: 4, opacity: 0.9 }} />
+                                    <Polyline positions={trip.routePath} pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.9 }} />
                                     <Marker position={getPositionByProgress(trip.routePath, trip.progress)} icon={tripIcon(trip.vehiclePlate)} />
                                   </MapContainer>
                                 </div>
@@ -1067,8 +1278,18 @@ export default function App() {
                                   ) : (
                                     <div className="space-y-1">
                                       {trip.evidencias.map((doc, idx) => (
-                                        <div key={`${doc.nombre}-${idx}`} className="text-xs text-gray-700 bg-slate-50 rounded px-2 py-1">
-                                          {doc.tipo} · {doc.nombre} · {doc.fecha}
+                                        <div key={`${doc.nombre}-${idx}`} className="flex items-center justify-between gap-2 text-xs text-gray-700 bg-slate-50 rounded px-2 py-1">
+                                          <span className="truncate">
+                                            {doc.tipo} · {doc.nombre} · {doc.fecha}
+                                          </span>
+                                          {doc.tipo.includes('remito') && (
+                                            <button
+                                              onClick={() => setSelectedEvidenceUpdate({ tripId: trip.id, evidenceIndex: idx })}
+                                              className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                                            >
+                                              Actualizar
+                                            </button>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
@@ -1103,7 +1324,7 @@ export default function App() {
                         <div className="font-semibold text-gray-800">{receipt.mes}</div>
                         <div className="text-sm text-gray-600">Fecha: {receipt.fecha}</div>
                       </div>
-                      <FileBadge className={`w-8 h-8 ${receipt.firmado ? 'text-green-500' : 'text-gray-400'}`} />
+                      <FileBadge className={`w-8 h-8 ${receipt.firmado ? 'text-blue-600' : 'text-gray-400'}`} />
                     </div>
 
                     <div className="flex gap-2">
@@ -1118,7 +1339,7 @@ export default function App() {
                             setSelectedReceipt(receipt.id);
                             setShowSignatureModal(true);
                           }}
-                          className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
+                          className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-semibold flex items-center justify-center gap-2"
                         >
                           <PenTool className="w-4 h-4" />
                           Firmar
@@ -1126,7 +1347,7 @@ export default function App() {
                       )}
 
                       {receipt.firmado && (
-                        <div className="flex-1 px-4 py-2 bg-green-100 text-green-700 rounded-lg text-sm font-semibold flex items-center justify-center gap-2">
+                        <div className="flex-1 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm font-semibold flex items-center justify-center gap-2">
                           <Check className="w-4 h-4" />
                           Firmado
                         </div>
@@ -1149,11 +1370,13 @@ export default function App() {
               <div className="bg-white rounded-xl shadow-lg p-6 mb-4">
                 <div className="flex items-center gap-4 mb-6">
                   <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">
-                    JM
+                    {driverInitials}
                   </div>
                   <div>
-                    <h2 className="text-xl font-bold text-gray-800">Juan Martínez</h2>
-                    <p className="text-sm text-gray-600">Chofer Profesional · Legajo CH-1029</p>
+                    <h2 className="text-xl font-bold text-gray-800">{currentDriverName}</h2>
+                    <p className="text-sm text-gray-600">
+                      Chofer · {activeDriverProfile?.email ?? loginEmail.trim().toLowerCase()}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1186,13 +1409,13 @@ export default function App() {
                     </div>
 
                     {doc.estado === 'rojo' && (
-                      <div className="mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                      <div className="mt-2 px-3 py-2 bg-slate-100 border border-slate-300 rounded-lg text-xs text-slate-700">
                         ⚠️ Documento vencido. Actualiza urgente.
                       </div>
                     )}
 
                     {doc.estado === 'amarillo' && (
-                      <div className="mt-2 px-3 py-2 bg-yellow-50 border border-yellow-200 rounded-lg text-xs text-yellow-700">
+                      <div className="mt-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
                         ⏰ Vence pronto. Considera renovar.
                       </div>
                     )}
@@ -1231,7 +1454,12 @@ export default function App() {
           ].map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveScreen(item.id)}
+              onClick={() => {
+                setActiveScreen(item.id);
+                if (item.id === 'ruta') {
+                  setShowMapScreen(false);
+                }
+              }}
               className={`flex flex-col items-center py-2 px-3 rounded-lg transition-colors ${
                 activeScreen === item.id
                   ? 'bg-blue-50 text-blue-600'
@@ -1312,10 +1540,42 @@ export default function App() {
             >
               <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6"></div>
 
-              <h3 className="text-xl font-bold mb-4 text-gray-800">Evento de Ruta</h3>
+              <h3 className="text-xl font-bold mb-2 text-gray-800">Reporte de evento en ruta</h3>
               <p className="text-sm text-slate-600 mb-3">
-                Registra solo informacion necesaria para que trafico actue de inmediato.
+                Selecciona el tipo de evento y registra un detalle breve para activar soporte operativo.
               </p>
+
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                {(['incidente', 'retraso', 'desvio', 'parada'] as RouteEventType[]).map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setSelectedRouteEventType(type)}
+                    className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                      selectedRouteEventType === type
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 bg-white hover:bg-gray-50'
+                    }`}
+                  >
+                    <p className="text-sm font-semibold text-slate-800">{routeEventMeta[type].label}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-500">{routeEventMeta[type].helper}</p>
+                  </button>
+                ))}
+              </div>
+
+              <div className="mb-2 flex flex-wrap gap-2">
+                <button
+                  onClick={() => setEventDescription('Desvío preventivo por corte de ruta.')}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-[11px] text-slate-700"
+                >
+                  Cargar texto rápido: desvío
+                </button>
+                <button
+                  onClick={() => setEventDescription('Parada técnica por revisión de unidad.')}
+                  className="rounded-full bg-slate-100 px-3 py-1 text-[11px] text-slate-700"
+                >
+                  Cargar texto rápido: parada
+                </button>
+              </div>
 
               <textarea
                 value={eventDescription}
@@ -1324,29 +1584,28 @@ export default function App() {
                 className="w-full border border-gray-300 rounded-xl p-3 mb-4 text-sm"
               />
 
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <button
-                  onClick={() => handleRouteEvent(activeTripId, 'incidente')}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white py-4 rounded-xl font-semibold flex items-center justify-center gap-3 text-lg transition-colors"
+                  onClick={() => {
+                    if (!selectedRouteEventType) {
+                      toast.error('Selecciona el tipo de evento a reportar.');
+                      return;
+                    }
+                    handleRouteEvent(activeTripId, selectedRouteEventType);
+                  }}
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white py-4 rounded-xl font-semibold flex items-center justify-center gap-3 text-base transition-colors"
                 >
-                  <AlertTriangle className="w-6 h-6" />
-                  Incidente
+                  <AlertTriangle className="w-5 h-5" />
+                  Enviar reporte de evento
                 </button>
-
                 <button
-                  onClick={() => handleRouteEvent(activeTripId, 'retraso')}
-                  className="w-full bg-amber-600 hover:bg-amber-700 text-white py-4 rounded-xl font-semibold flex items-center justify-center gap-3 text-lg transition-colors"
+                  onClick={() => {
+                    setShowIncidentModal(false);
+                    setSelectedRouteEventType(null);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                 >
-                  <Clock className="w-6 h-6" />
-                  Retraso
-                </button>
-
-                <button
-                  onClick={() => handleRouteEvent(activeTripId, 'desvio')}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-semibold flex items-center justify-center gap-3 text-lg transition-colors"
-                >
-                  <Route className="w-6 h-6" />
-                  Desvío
+                  Cancelar
                 </button>
               </div>
             </motion.div>
@@ -1378,11 +1637,13 @@ export default function App() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-2">Categoría</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {[
-                      { id: 'peaje' as ExpenseCategory, icon: Car, label: 'Peaje' },
+                      { id: 'peajes' as ExpenseCategory, icon: Car, label: 'Peajes' },
                       { id: 'combustible' as ExpenseCategory, icon: Fuel, label: 'Combustible' },
-                      { id: 'viatico' as ExpenseCategory, icon: Coffee, label: 'Viático' },
+                      { id: 'gomeria' as ExpenseCategory, icon: Wrench, label: 'Gomería' },
+                      { id: 'fitosanitario' as ExpenseCategory, icon: FlaskConical, label: 'Fitosanitario' },
+                      { id: 'otros' as ExpenseCategory, icon: Coffee, label: 'Otros' },
                     ].map((cat) => (
                       <button
                         key={cat.id}
@@ -1413,20 +1674,26 @@ export default function App() {
 
                 <button
                   onClick={handleExpenseTicketCapture}
-                  className="w-full bg-purple-500 text-white py-4 rounded-xl font-semibold flex items-center justify-center gap-3"
+                  className="w-full bg-blue-500 text-white py-4 rounded-xl font-semibold flex items-center justify-center gap-3 hover:bg-blue-600"
                 >
                   <Camera className="w-5 h-5" />
                   Capturar Ticket (máx. 500kb)
                 </button>
                 {expenseTicketRawKb && expenseTicketFinalKb && (
-                  <div className="text-xs rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-purple-700">
+                  <div className="text-xs rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-blue-700">
                     Tamaño original: {expenseTicketRawKb}kb · Tamaño final: {expenseTicketFinalKb}kb
+                  </div>
+                )}
+                {!expenseTicketFinalKb && (
+                  <div className="text-xs rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-slate-700">
+                    Debes cargar el ticket/comprobante para habilitar el guardado.
                   </div>
                 )}
 
                 <button
                   onClick={handleExpense}
-                  className="w-full bg-green-500 text-white py-4 rounded-xl font-bold text-lg"
+                  disabled={!expenseTicketFinalKb}
+                  className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500"
                 >
                   Guardar Gasto
                 </button>
@@ -1469,19 +1736,25 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => setShowPhotoModal(false)}
-                  className="px-4 py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold"
+                  onClick={handleClosePhotoModal}
+                  className="px-4 py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold disabled:bg-gray-100 disabled:text-gray-400"
+                  disabled={photoType === 'remito-final'}
                 >
-                  Cancelar
+                  {photoType === 'remito-final' ? 'Obligatorio' : 'Cancelar'}
                 </button>
                 <button
                   onClick={() => handlePhotoCapture(activeTripId)}
-                  className="px-4 py-3 bg-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2"
+                  className="px-4 py-3 bg-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-blue-600"
                 >
                   <Camera className="w-5 h-5" />
                   Capturar
                 </button>
               </div>
+              {photoType === 'remito-final' && (
+                <p className="mt-3 text-center text-xs text-slate-600">
+                  Debes capturar el remito conformado para finalizar el viaje.
+                </p>
+              )}
             </motion.div>
           </motion.div>
         )}
@@ -1535,7 +1808,7 @@ export default function App() {
 
                 <button
                   onClick={clearSignature}
-                  className="px-4 py-3 bg-red-100 text-red-700 rounded-xl font-semibold flex items-center justify-center gap-2"
+                  className="px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-semibold flex items-center justify-center gap-2"
                 >
                   <Trash2 className="w-4 h-4" />
                   Limpiar
@@ -1543,7 +1816,7 @@ export default function App() {
 
                 <button
                   onClick={saveSignature}
-                  className="px-4 py-3 bg-green-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2"
+                  className="px-4 py-3 bg-blue-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-blue-600"
                 >
                   <Check className="w-4 h-4" />
                   Guardar
@@ -1593,6 +1866,55 @@ export default function App() {
                   className="px-4 py-3 bg-blue-500 text-white rounded-xl font-semibold"
                 >
                   Subir
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal: Actualizar remito en historial */}
+      <AnimatePresence>
+        {selectedEvidenceUpdate && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-90 z-[1000] flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl w-full max-w-sm p-6"
+            >
+              <h3 className="text-xl font-bold mb-3 text-gray-800 text-center">
+                Actualizar remito
+              </h3>
+              <p className="text-sm text-gray-600 text-center mb-4">
+                Reemplaza el documento adjunto de este viaje en historial.
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl h-40 flex items-center justify-center mb-6">
+                <div className="text-center">
+                  <Upload className="w-12 h-12 text-blue-500 mx-auto mb-2" />
+                  <p className="text-sm text-blue-700 font-semibold">Simular selección de archivo</p>
+                  <p className="text-xs text-slate-500 mt-1">JPG o PDF</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setSelectedEvidenceUpdate(null)}
+                  className="px-4 py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleTripEvidenceUpdate}
+                  className="px-4 py-3 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600"
+                >
+                  Guardar
                 </button>
               </div>
             </motion.div>

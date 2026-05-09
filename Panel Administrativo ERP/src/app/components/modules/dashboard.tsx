@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
+import { GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import { divIcon, LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -44,12 +44,32 @@ function tripIcon(plate: string) {
   });
 }
 
+function zoneColorToHex(colorClass: string) {
+  const colors: Record<string, string> = {
+    "bg-blue-500": "#3B82F6",
+    "bg-teal-500": "#14B8A6",
+    "bg-orange-500": "#F97316",
+    "bg-purple-500": "#A855F7",
+    "bg-indigo-500": "#6366F1",
+    "bg-pink-500": "#EC4899",
+  };
+  return colors[colorClass] ?? "#3b82f6";
+}
+
 function MapResizeHandler({ watchValue }: { watchValue: string }) {
   const map = useMap();
   useEffect(() => {
     const timer = window.setTimeout(() => map.invalidateSize(), 150);
     return () => window.clearTimeout(timer);
   }, [map, watchValue]);
+  return null;
+}
+
+function MapViewportHandler({ center, zoom }: { center: LatLngExpression; zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.flyTo(center as [number, number], zoom, { animate: true, duration: 0.9 });
+  }, [center, zoom, map]);
   return null;
 }
 
@@ -70,25 +90,25 @@ async function fetchRoadRoute(path: LatLngExpression[]): Promise<LatLngExpressio
   return geometry.map(([lng, lat]) => [lat, lng] as LatLngExpression);
 }
 
-function RouteMap({
-  zoneTrips,
+function UnifiedRouteMap({
+  visibleTrips,
   selectedZone,
   zones,
   isDarkTheme,
 }: {
-  zoneTrips: PlannedTrip[];
+  visibleTrips: PlannedTrip[];
   selectedZone: ZoneId | null;
-  zones: { id: ZoneId; name: string; colorClass: string; mapCenter: LatLngExpression; zoom: number }[];
+  zones: { id: ZoneId; name: string; colorClass: string; mapCenter: LatLngExpression; zoom: number; radiusKm: number }[];
   isDarkTheme: boolean;
 }) {
-  const zoneConfig = selectedZone ? zones.find((zone) => zone.id === selectedZone) : null;
-  const center = zoneConfig ? zoneConfig.mapCenter : ([-34.4, -61.5] as LatLngExpression);
-  const zoom = zoneConfig ? zoneConfig.zoom : 5;
+  const selectedZoneConfig = selectedZone ? zones.find((zone) => zone.id === selectedZone) : null;
+  const center = selectedZoneConfig ? selectedZoneConfig.mapCenter : ([-34.4, -61.5] as LatLngExpression);
+  const zoom = selectedZoneConfig ? selectedZoneConfig.zoom : 5;
   const [resolvedRoutes, setResolvedRoutes] = useState<Record<string, LatLngExpression[]>>({});
 
   useEffect(() => {
     let isActive = true;
-    const unresolvedTrips = zoneTrips.filter((trip) => !resolvedRoutes[trip.id]);
+    const unresolvedTrips = visibleTrips.filter((trip) => !resolvedRoutes[trip.id]);
     if (!unresolvedTrips.length) return;
 
     Promise.all(
@@ -114,13 +134,14 @@ function RouteMap({
     return () => {
       isActive = false;
     };
-  }, [zoneTrips, resolvedRoutes]);
+  }, [visibleTrips, resolvedRoutes]);
 
   return (
-    <div className={`overflow-hidden rounded-xl border border-border ${selectedZone ? "h-[520px]" : "h-[420px]"}`}>
+    <div className="overflow-hidden rounded-xl border border-border h-[560px]">
       <MapContainer center={center} zoom={zoom} className="h-full w-full" scrollWheelZoom>
+        <MapViewportHandler center={center} zoom={zoom} />
         <MapResizeHandler
-          watchValue={`${selectedZone ?? "all"}-${zoneTrips.length}-${zoneTrips.map((trip) => trip.id).join(",")}`}
+          watchValue={`${selectedZone ?? "all"}-${visibleTrips.length}-${visibleTrips.map((trip) => trip.id).join(",")}`}
         />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
@@ -130,17 +151,43 @@ function RouteMap({
               : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           }
         />
-        {zoneTrips.map((trip) => {
+        {zones.map((zone) => {
+          if (!zone.areaGeoJson) return null;
+          const geometry =
+            zone.areaGeoJson.type === "FeatureCollection"
+              ? zone.areaGeoJson.features?.[0]?.geometry
+              : zone.areaGeoJson.geometry;
+          if (geometry?.type !== "Polygon" && geometry?.type !== "MultiPolygon") return null;
+          const active = selectedZone ? selectedZone === zone.id : true;
+          const stroke = zoneColorToHex(zone.colorClass);
+          return (
+            <GeoJSON
+              key={`zone-area-${zone.id}`}
+              data={zone.areaGeoJson as any}
+              style={{
+                color: stroke,
+                weight: active ? 3 : 2,
+                fillColor: stroke,
+                fillOpacity: active ? 0.18 : 0.08,
+                opacity: active ? 0.9 : 0.45,
+              }}
+            />
+          );
+        })}
+        {visibleTrips.map((trip) => {
           const mapPath = resolvedRoutes[trip.id] ?? trip.routePath;
           const position = getPositionByProgress(mapPath, trip.progress);
+          const tripZone = zones.find((zone) => zone.id === trip.zoneId);
+          const tripColor = zoneColorToHex(tripZone?.colorClass ?? "bg-blue-500");
           return (
             <div key={trip.id}>
-              <Polyline positions={mapPath} pathOptions={{ color: "#22d3ee", weight: 4, opacity: 0.9 }} />
+              <Polyline positions={mapPath} pathOptions={{ color: tripColor, weight: 4, opacity: 0.9 }} />
               <Marker position={position} icon={tripIcon(trip.vehiclePlate)}>
                 <Popup>
                   <div className="space-y-1">
                     <div className="font-medium">{trip.id}</div>
                     <div>{trip.origin} {"->"} {trip.destination}</div>
+                    <div>Zona: {tripZone?.name ?? trip.zoneId}</div>
                     <div>Chofer: {trip.driver}</div>
                     <div>Vehículo: {trip.vehiclePlate}</div>
                     <div>Estado: {trip.status}</div>
@@ -155,7 +202,7 @@ function RouteMap({
   );
 }
 
-export function Dashboard() {
+export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () => void }) {
   const { resolvedTheme } = useTheme();
   const { zones, trips } = useOperationsData();
   const syncedAlerts = useSyncAlerts(
@@ -201,13 +248,15 @@ export function Dashboard() {
     () =>
       zones.map((zone) => {
         const zoneTrips = trips.filter((trip) => trip.zoneId === zone.id);
+        const zoneTripIds = new Set(zoneTrips.map((trip) => trip.id));
+        const zonePlates = new Set(zoneTrips.map((trip) => trip.vehiclePlate));
         return {
           ...zone,
           activeTrips: zoneTrips.filter((trip) => trip.status !== "Entregado").length,
-          alerts: syncedAlerts.filter((alert) =>
-            zone.id === "zona-argentina"
-              ? alert.message.includes("Ruta") || alert.message.includes("camión")
-              : alert.message.includes("Chofer") || alert.message.includes("Parada"),
+          alerts: syncedAlerts.filter(
+            (alert) =>
+              (alert.tripId ? zoneTripIds.has(alert.tripId) : false) ||
+              (alert.vehiclePlate ? zonePlates.has(alert.vehiclePlate) : false),
           ).length,
         };
       }),
@@ -271,54 +320,62 @@ export function Dashboard() {
         </CardContent>
       </Card>
 
-      <div className={`grid gap-6 ${selectedZone ? "grid-cols-1" : "grid-cols-1 xl:grid-cols-2"}`}>
-        {zoneStats
-          .filter((zone) => (selectedZone ? zone.id === selectedZone : true))
-          .map((zone) => {
-            const zoneTrips = visibleTrips.filter(
-              (trip) =>
-                trip.zoneId === zone.id &&
-                trip.status !== "Pendiente de aceptación" &&
-                trip.status !== "Cancelado" &&
-                trip.status !== "Entregado",
-            );
-            return (
-              <Card key={zone.id} className="overflow-hidden">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2"><MapPin className="h-5 w-5" />{zone.name}</CardTitle>
-                    <div className={`h-3 w-3 rounded-full ${zone.colorClass}`} />
+      <Card className="overflow-hidden">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5" />
+              Mapa operativo unificado
+            </CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              {zoneStats.map((zone) => (
+                <div key={zone.id} className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs">
+                  <span className={`h-2.5 w-2.5 rounded-full ${zone.colorClass}`} />
+                  <span>{zone.name}</span>
+                  <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{zone.activeTrips}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <UnifiedRouteMap visibleTrips={visibleTrips} selectedZone={selectedZone} zones={zones} isDarkTheme={isDarkTheme} />
+          <div className="space-y-2">
+            {visibleTrips.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Sin viajes visibles para los filtros actuales.</div>
+            ) : (
+              visibleTrips.map((trip) => {
+                const zone = zones.find((item) => item.id === trip.zoneId);
+                return (
+                  <div key={trip.id} className="flex flex-col gap-2 rounded-lg border p-3 md:flex-row md:items-center md:justify-between">
+                    <div className="space-y-1">
+                      <p className="text-sm">{trip.id} · {trip.origin} {"->"} {trip.destination}</p>
+                      <p className="text-xs text-muted-foreground">{trip.driver} · {trip.vehiclePlate} · {trip.cargo}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="gap-1">
+                        <span className={`h-2 w-2 rounded-full ${zone?.colorClass ?? "bg-blue-500"}`} />
+                        {zone?.name ?? trip.zoneId}
+                      </Badge>
+                      <Badge variant={getStatusVariant(trip.status) as "outline"}>{trip.status}</Badge>
+                      <Badge variant="outline">{trip.progress}%</Badge>
+                    </div>
                   </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <RouteMap zoneTrips={zoneTrips} selectedZone={selectedZone} zones={zones} isDarkTheme={isDarkTheme} />
-                  <div className="space-y-2">
-                    {zoneTrips.length === 0 ? (
-                      <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Sin viajes visibles para los filtros actuales.</div>
-                    ) : (
-                      zoneTrips.map((trip) => (
-                        <div key={trip.id} className="flex flex-col gap-2 rounded-lg border p-3 md:flex-row md:items-center md:justify-between">
-                          <div className="space-y-1">
-                            <p className="text-sm">{trip.id} · {trip.origin} {"->"} {trip.destination}</p>
-                            <p className="text-xs text-muted-foreground">{trip.driver} · {trip.vehiclePlate} · {trip.cargo}</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={getStatusVariant(trip.status) as "outline"}>{trip.status}</Badge>
-                            <Badge variant="outline">{trip.progress}%</Badge>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-      </div>
+                );
+              })
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-red-500" />Alertas en Tiempo Real</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-red-500" />Alertas en Tiempo Real</CardTitle>
+            <Button variant="outline" size="sm" onClick={onOpenAlertsHistory}>
+              Ver todas las alertas
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">

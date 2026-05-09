@@ -58,27 +58,48 @@ export const auditLogs = [
 
 export const zones = [
   {
-    id: "zona-argentina",
-    name: "Argentina",
-    activeTrips: 14,
-    alerts: 4,
+    id: "zona-bsas",
+    name: "Buenos Aires",
+    activeTrips: 2,
+    alerts: 1,
     color: "bg-blue-500",
     routes: [
-      { from: "Buenos Aires", to: "Córdoba", progress: 65, truck: "AB123CD" },
-      { from: "Mendoza", to: "Santiago", progress: 40, truck: "PQ234IJ" },
-      { from: "Rosario", to: "Córdoba", progress: 80, truck: "XY456EF" },
-    ]
+      { from: "Buenos Aires", to: "La Plata", progress: 65, truck: "AB123CD" },
+    ],
   },
   {
-    id: "zona-uruguay",
-    name: "Uruguay",
-    activeTrips: 8,
+    id: "zona-santafe",
+    name: "Santa Fe",
+    activeTrips: 2,
     alerts: 2,
-    color: "bg-green-500",
+    color: "bg-teal-500",
     routes: [
-      { from: "Montevideo", to: "Punta del Este", progress: 55, truck: "MN789GH" },
-      { from: "Colonia", to: "Buenos Aires", progress: 30, truck: "UV890MN" },
-    ]
+      { from: "Santa Fe", to: "Rafaela", progress: 55, truck: "MN789GH" },
+    ],
+  },
+  {
+    id: "zona-sanjuan",
+    name: "San Juan",
+    activeTrips: 2,
+    alerts: 1,
+    color: "bg-orange-500",
+    routes: [{ from: "San Juan", to: "Mendoza", progress: 48, truck: "UV890MN" }],
+  },
+  {
+    id: "zona-tucuman",
+    name: "Tucumán",
+    activeTrips: 2,
+    alerts: 1,
+    color: "bg-purple-500",
+    routes: [{ from: "Tucumán", to: "Concepción", progress: 33, truck: "VC227BB" }],
+  },
+  {
+    id: "zona-cordoba",
+    name: "Córdoba",
+    activeTrips: 2,
+    alerts: 1,
+    color: "bg-indigo-500",
+    routes: [{ from: "Ciudad de Córdoba", to: "Villa María", progress: 61, truck: "RS320AA" }],
   },
 ];
 

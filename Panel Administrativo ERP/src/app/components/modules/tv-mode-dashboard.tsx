@@ -7,10 +7,16 @@ const ROTATION_MS = 10000;
 
 export function TVModeDashboard() {
   const { zones } = useOperationsData();
-  const [selectedZone, setSelectedZone] = useState<ZoneId>("zona-argentina");
+  const [selectedZone, setSelectedZone] = useState<ZoneId>(zones[0]?.id ?? "");
   const [isPaused, setIsPaused] = useState(false);
 
   const zoneIds = useMemo(() => zones.map((zone) => zone.id), [zones]);
+
+  useEffect(() => {
+    if (!selectedZone && zoneIds.length) {
+      setSelectedZone(zoneIds[0]);
+    }
+  }, [selectedZone, zoneIds]);
 
   useEffect(() => {
     if (isPaused || zoneIds.length <= 1) return;

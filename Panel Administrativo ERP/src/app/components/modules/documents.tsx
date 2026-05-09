@@ -19,11 +19,23 @@ export function DocumentsModule() {
     documents,
     addDocument,
     removeDocument,
+    trips,
+    invoices,
+    addInvoice,
+    markInvoiceSigned,
     userDocumentTypesByRole,
     vehicleDocumentTypes,
   } = useOperationsData();
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<DocumentEntityType>("vehicle");
+  const [activeTab, setActiveTab] = useState<"vehicle" | "user" | "trip" | "payroll">("vehicle");
+  const [statusFilter, setStatusFilter] = useState<"all" | "Cargada" | "Firmada">("all");
+  const [isPayrollOpen, setIsPayrollOpen] = useState(false);
+  const [payrollForm, setPayrollForm] = useState({
+    driverId: "",
+    fileName: "",
+    fileType: "",
+    fileSizeKb: 0,
+  });
   const [form, setForm] = useState({
     entityType: "vehicle" as DocumentEntityType,
     entityId: "",
@@ -37,6 +49,7 @@ export function DocumentsModule() {
   const [isAutofillApplied, setIsAutofillApplied] = useState(false);
 
   const userOwners = users.filter((user) => user.role === "Chofer");
+  const drivers = users.filter((user) => user.role === "Chofer" && user.status === "Activo");
   const availableOwners = activeTab === "user" ? userOwners : vehicles;
   const selectedUser = users.find((user) => user.id === form.entityId);
   const availableDocTypes =
@@ -48,6 +61,29 @@ export function DocumentsModule() {
 
   const vehicleDocs = useMemo(() => documents.filter((doc) => doc.entityType === "vehicle"), [documents]);
   const userDocs = useMemo(() => documents.filter((doc) => doc.entityType === "user"), [documents]);
+  const tripDocs = useMemo(
+    () =>
+      trips
+        .filter((trip) => (trip.evidencias ?? []).some((ev) => ev.tipo.includes("remito")))
+        .map((trip) => ({
+          tripId: trip.id,
+          driver: trip.driver,
+          route: `${trip.origin} → ${trip.destination}`,
+          status: trip.status,
+          remitos: (trip.evidencias ?? []).filter((ev) => ev.tipo.includes("remito")),
+        })),
+    [trips],
+  );
+  const filteredInvoices = useMemo(
+    () => invoices.filter((invoice) => (statusFilter === "all" ? true : invoice.status === statusFilter)),
+    [invoices, statusFilter],
+  );
+
+  function handleTripDocumentAction(tripId: string) {
+    toast.message(`Gestionar documentos del viaje ${tripId}`, {
+      description: "Utiliza esta acción para continuar con la gestión documental del viaje en este módulo.",
+    });
+  }
 
   function detectDocumentType(fileName: string, entityType: DocumentEntityType, role?: string) {
     const normalized = fileName.toLowerCase();
@@ -134,6 +170,45 @@ export function DocumentsModule() {
     setIsAutofillApplied(false);
   }
 
+  function handlePayrollFileUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.type !== "application/pdf" && !file.type.startsWith("image/")) {
+      toast.error("El recibo debe ser PDF o imagen.");
+      return;
+    }
+    setPayrollForm((prev) => ({
+      ...prev,
+      fileName: file.name,
+      fileType: file.type || "application/octet-stream",
+      fileSizeKb: Math.max(1, Math.round(file.size / 1024)),
+    }));
+  }
+
+  function handlePayrollSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const autoPeriod = new Date().toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+    const created = addInvoice({
+      driverId: payrollForm.driverId,
+      period: autoPeriod,
+      amount: 0,
+      fileName: payrollForm.fileName,
+      fileType: payrollForm.fileType,
+      fileSizeKb: payrollForm.fileSizeKb,
+    });
+    if (!created) {
+      toast.error("Completa chofer y adjunto para cargar el recibo.");
+      return;
+    }
+    setIsPayrollOpen(false);
+    setPayrollForm({
+      driverId: "",
+      fileName: "",
+      fileType: "",
+      fileSizeKb: 0,
+    });
+  }
+
   function ownerLabel(entityType: DocumentEntityType, entityId: string) {
     if (entityType === "user") {
       return users.find((user) => user.id === entityId)?.name ?? "Usuario";
@@ -145,26 +220,32 @@ export function DocumentsModule() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Gestión de Documentos</h1>
-        <Dialog
-          open={isOpen}
-          onOpenChange={(open) => {
-            setIsOpen(open);
-            if (open) {
-              setForm((prev) => ({ ...prev, entityType: activeTab }));
-            }
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              Cargar documento
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Alta de documento</DialogTitle>
-            </DialogHeader>
-            <form className="grid gap-4" onSubmit={handleSubmit}>
+        {activeTab === "trip" ? null : activeTab === "payroll" ? (
+          <Button onClick={() => setIsPayrollOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Cargar documento
+          </Button>
+        ) : (
+          <Dialog
+            open={isOpen}
+            onOpenChange={(open) => {
+              setIsOpen(open);
+              if (open) {
+                setForm((prev) => ({ ...prev, entityType: activeTab === "user" ? "user" : "vehicle" }));
+              }
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Cargar documento
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Alta de documento</DialogTitle>
+              </DialogHeader>
+              <form className="grid gap-4" onSubmit={handleSubmit}>
               <div className="space-y-2 rounded-lg border border-dashed p-4">
                 <Label className="flex items-center gap-2">
                   <Upload className="h-4 w-4" />
@@ -222,12 +303,13 @@ export function DocumentsModule() {
                 <Label>Observaciones</Label>
                 <Textarea value={form.notes} onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))} />
               </div>
-              <DialogFooter>
-                <Button type="submit">Guardar documento</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                <DialogFooter>
+                  <Button type="submit">Guardar documento</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       <Card>
@@ -241,15 +323,17 @@ export function DocumentsModule() {
           <Tabs
             value={activeTab}
             onValueChange={(value) => {
-              const tab = value as DocumentEntityType;
+              const tab = value as "vehicle" | "user" | "trip" | "payroll";
               setActiveTab(tab);
-              setForm((prev) => ({ ...prev, entityType: tab, entityId: "", documentType: "" }));
+              setForm((prev) => ({ ...prev, entityType: tab === "user" ? "user" : "vehicle", entityId: "", documentType: "" }));
             }}
             className="space-y-4"
           >
-            <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsList className="grid w-full max-w-3xl grid-cols-4">
               <TabsTrigger value="vehicle">Vehículos</TabsTrigger>
               <TabsTrigger value="user">Choferes</TabsTrigger>
+              <TabsTrigger value="trip">Viajes</TabsTrigger>
+              <TabsTrigger value="payroll">Recibos de pago</TabsTrigger>
             </TabsList>
 
             {[
@@ -298,6 +382,132 @@ export function DocumentsModule() {
                 </div>
               </TabsContent>
             ))}
+
+            <TabsContent value="trip" className="mt-0">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="p-3 text-left">Viaje</th>
+                      <th className="p-3 text-left">Ruta</th>
+                      <th className="p-3 text-left">Chofer</th>
+                      <th className="p-3 text-left">Estado</th>
+                      <th className="p-3 text-left">Remitos adjuntos</th>
+                      <th className="p-3 text-left">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tripDocs.length === 0 ? (
+                      <tr>
+                        <td className="p-3 text-sm text-muted-foreground" colSpan={6}>
+                          No hay viajes con remitos adjuntos.
+                        </td>
+                      </tr>
+                    ) : (
+                      tripDocs.map((trip) => (
+                        <tr key={trip.tripId} className="border-b border-border">
+                          <td className="p-3">{trip.tripId}</td>
+                          <td className="p-3">{trip.route}</td>
+                          <td className="p-3">{trip.driver}</td>
+                          <td className="p-3"><Badge variant="outline">{trip.status}</Badge></td>
+                          <td className="p-3">
+                            <div className="flex flex-wrap gap-1">
+                              {trip.remitos.map((remito, idx) => (
+                                <Badge key={`${trip.tripId}-${remito.nombre}-${idx}`} variant="secondary">
+                                  {remito.tipo}
+                                </Badge>
+                              ))}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <Button size="sm" variant="outline" onClick={() => handleTripDocumentAction(trip.tripId)}>
+                              Gestionar
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="payroll" className="mt-0">
+              <Dialog open={isPayrollOpen} onOpenChange={setIsPayrollOpen}>
+                <DialogContent className="sm:max-w-xl">
+                  <DialogHeader>
+                    <DialogTitle>Nuevo recibo de pago para chofer</DialogTitle>
+                  </DialogHeader>
+                  <form className="grid gap-4" onSubmit={handlePayrollSubmit}>
+                    <div className="space-y-2">
+                      <Label>Chofer</Label>
+                      <Select value={payrollForm.driverId} onValueChange={(value) => setPayrollForm((prev) => ({ ...prev, driverId: value }))}>
+                        <SelectTrigger><SelectValue placeholder="Seleccionar chofer" /></SelectTrigger>
+                        <SelectContent>
+                          {drivers.map((driver) => (
+                            <SelectItem key={driver.id} value={driver.id}>{driver.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2 rounded-lg border border-dashed p-4">
+                      <Label className="flex items-center gap-2">
+                        <Upload className="h-4 w-4" />
+                        Adjuntar recibo (PDF/imagen)
+                      </Label>
+                      <Input type="file" accept="application/pdf,image/*" onChange={handlePayrollFileUpload} />
+                      {payrollForm.fileName ? (
+                        <Badge variant="outline">{payrollForm.fileName} · {payrollForm.fileSizeKb} KB</Badge>
+                      ) : null}
+                    </div>
+                    <DialogFooter>
+                      <Button type="submit">Guardar y asignar</Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="p-3 text-left">ID</th>
+                      <th className="p-3 text-left">Chofer</th>
+                      <th className="p-3 text-left">Periodo</th>
+                      <th className="p-3 text-left">Monto</th>
+                      <th className="p-3 text-left">Adjunto</th>
+                      <th className="p-3 text-left">Estado</th>
+                      <th className="p-3 text-left">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredInvoices.map((invoice) => (
+                      <tr key={invoice.id} className="border-b border-border">
+                        <td className="p-3">{invoice.id}</td>
+                        <td className="p-3">{invoice.driverName}</td>
+                        <td className="p-3">{invoice.period}</td>
+                        <td className="p-3">${invoice.amount.toLocaleString("es-AR")}</td>
+                        <td className="p-3 text-xs text-muted-foreground">{invoice.fileName}</td>
+                        <td className="p-3">
+                          <Badge variant={invoice.status === "Firmada" ? "success" : "warning"}>
+                            {invoice.status}
+                          </Badge>
+                        </td>
+                        <td className="p-3">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={invoice.status === "Firmada"}
+                            onClick={() => markInvoiceSigned(invoice.id)}
+                          >
+                            Marcar firmado
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>

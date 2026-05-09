@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -24,13 +24,14 @@ type VehicleDocDraft = {
 
 export function VehiclesModule() {
   const { zones, vehicles, addVehicle, updateVehicleStatus, removeVehicle, documents, addDocument, vehicleDocumentTypes } = useOperationsData();
+  const defaultZoneId = zones[0]?.id ?? "";
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<VehicleStatus | "all">("all");
   const [form, setForm] = useState({
     plate: "",
     type: "Camión" as "Camión" | "Remolque",
-    zoneId: "zona-argentina" as ZoneId,
+    zoneId: defaultZoneId as ZoneId,
     brand: "",
     model: "",
   });
@@ -127,6 +128,12 @@ export function VehiclesModule() {
       }),
     [vehicles, search, statusFilter],
   );
+
+  useEffect(() => {
+    if (!defaultZoneId) return;
+    if (form.zoneId) return;
+    setForm((prev) => ({ ...prev, zoneId: defaultZoneId as ZoneId }));
+  }, [defaultZoneId, form.zoneId]);
 
   return (
     <div className="space-y-6">

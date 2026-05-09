@@ -10,14 +10,12 @@ import { ExpirationConfig } from "./components/modules/expiration-config";
 import { Security } from "./components/modules/security";
 import { VehiclesModule } from "./components/modules/vehicles";
 import { DocumentsModule } from "./components/modules/documents";
-import { InvoicesHRModule } from "./components/modules/invoices-hr";
 import { TVModeDashboard } from "./components/modules/tv-mode-dashboard";
 import {
   LayoutDashboard,
   Truck,
   DollarSign,
-  AlertTriangle,
-  FileCheck,
+  Settings,
   Shield,
   Bell,
   User,
@@ -27,7 +25,6 @@ import {
   X,
   Car,
   FolderOpen,
-  ReceiptText,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { OperationsDataProvider, useOperationsData, UserRole } from "./lib/operations-data";
@@ -52,7 +49,7 @@ function ThemeToggle() {
 function AppContent() {
   const [currentView, setCurrentView] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [currentUserRole, setCurrentUserRole] = useState<UserRole>("Supervisor");
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole>("Administrador");
   const { resetDemoData } = useOperationsData();
 
   const menuItems = [
@@ -60,10 +57,8 @@ function AppContent() {
     { id: "trips", label: "Gestión de Viajes", icon: Truck },
     { id: "vehicles", label: "Flota de Vehículos", icon: Car },
     { id: "documents", label: "Documentación", icon: FolderOpen },
-    { id: "invoices", label: "RRHH · Facturas", icon: ReceiptText },
-    { id: "alerts", label: "Alertas Operativas", icon: AlertTriangle },
-    { id: "expiration", label: "Vencimientos", icon: FileCheck },
     { id: "costs", label: "Costos y Rentabilidad", icon: DollarSign },
+    { id: "configurations", label: "Configuraciones", icon: Settings },
     { id: "security", label: "Usuarios y Seguridad", icon: Shield },
     { id: "tvmode", label: "TV Mode", icon: LayoutDashboard },
   ];
@@ -71,7 +66,7 @@ function AppContent() {
   const renderContent = () => {
     switch (currentView) {
       case "dashboard":
-        return <Dashboard />;
+        return <Dashboard onOpenAlertsHistory={() => setCurrentView("alerts")} />;
       case "trips":
         return <Trips />;
       case "costs":
@@ -82,9 +77,7 @@ function AppContent() {
         return <VehiclesModule />;
       case "documents":
         return <DocumentsModule />;
-      case "invoices":
-        return <InvoicesHRModule />;
-      case "expiration":
+      case "configurations":
         return <ExpirationConfig />;
       case "security":
         return <Security />;

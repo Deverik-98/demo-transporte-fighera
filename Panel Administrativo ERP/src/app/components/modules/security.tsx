@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Badge } from "../ui/badge";
@@ -25,12 +25,13 @@ type DriverDocDraft = {
 
 export function Security() {
   const { users, auditLogs, zones, addUser, updateUserStatus, removeUser, addDocument, userDocumentTypesByRole } = useOperationsData();
+  const defaultZoneId = zones[0]?.id ?? "";
   const [isOpen, setIsOpen] = useState(false);
   const [form, setForm] = useState({
     name: "",
     email: "",
     role: "Operador" as UserRole,
-    zoneId: "zona-argentina" as ZoneId,
+    zoneId: defaultZoneId as ZoneId,
   });
   const [driverDocsDraft, setDriverDocsDraft] = useState<DriverDocDraft[]>([
     {
@@ -113,6 +114,12 @@ export function Security() {
       fileSizeKb: Math.max(1, Math.round(file.size / 1024)),
     });
   }
+
+  useEffect(() => {
+    if (!defaultZoneId) return;
+    if (form.zoneId) return;
+    setForm((prev) => ({ ...prev, zoneId: defaultZoneId as ZoneId }));
+  }, [defaultZoneId, form.zoneId]);
 
   return (
     <div className="space-y-6">

@@ -10,6 +10,14 @@ import { TripAssignmentModal } from "./trip-assignment-modal";
 
 export function Trips() {
   const { trips, zones, updateTripStatus, cancelTrip, removeTrip } = useOperationsData();
+  const zoneBadgeClass: Record<string, string> = {
+    "bg-blue-500": "bg-blue-500 text-white",
+    "bg-teal-500": "bg-teal-500 text-white",
+    "bg-orange-500": "bg-orange-500 text-white",
+    "bg-purple-500": "bg-purple-500 text-white",
+    "bg-indigo-500": "bg-indigo-500 text-white",
+    "bg-pink-500": "bg-pink-500 text-white",
+  };
   const [viewMode, setViewMode] = useState<"table" | "kanban">("table");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TripStatus | "all">("all");
@@ -121,6 +129,7 @@ export function Trips() {
                     <th className="text-left p-3">Destino</th>
                     <th className="text-left p-3">Chofer</th>
                     <th className="text-left p-3">Patente</th>
+                    <th className="text-left p-3">Zona</th>
                     <th className="text-left p-3">Remitos</th>
                     <th className="text-left p-3">Estado</th>
                     <th className="text-left p-3">Acciones</th>
@@ -136,6 +145,15 @@ export function Trips() {
                       <td className="p-3">{trip.driver}</td>
                       <td className="p-3">
                         <Badge variant="outline">{trip.vehiclePlate}</Badge>
+                      </td>
+                      <td className="p-3">
+                        {(() => {
+                          const zone = zones.find((item) => item.id === trip.zoneId);
+                          if (!zone) {
+                            return <Badge variant="outline">{trip.zoneId}</Badge>;
+                          }
+                          return <Badge className={zoneBadgeClass[zone.colorClass] ?? "bg-blue-500 text-white"}>{zone.name}</Badge>;
+                        })()}
                       </td>
                       <td className="p-3">
                         <div className="flex flex-wrap gap-1">

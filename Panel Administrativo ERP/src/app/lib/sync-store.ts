@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { LatLngExpression } from "leaflet";
 
-export type SyncZoneId = "zona-argentina" | "zona-uruguay";
+export type SyncZoneId = string;
 export type SyncTripStatus =
   | "Pendiente de aceptación"
   | "Asignado"
@@ -46,6 +46,7 @@ export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
 export const DOCUMENTS_KEY = "tf_sync_documents_v1";
 export const SETTINGS_KEY = "tf_sync_settings_v1";
+export const ZONES_KEY = "tf_sync_zones_v3";
 export const RESET_REQUEST_KEY = "tf_sync_reset_request_v1";
 const INTERNAL_EVENT = "tf-sync-store-updated";
 
@@ -145,6 +146,12 @@ export function getSyncSettings<T>() {
 }
 export function setSyncSettings<T>(next: T[]) {
   writeJson(SETTINGS_KEY, next);
+}
+export function getSyncZones<T>() {
+  return readJson<T[]>(ZONES_KEY, []);
+}
+export function setSyncZones<T>(next: T[]) {
+  writeJson(ZONES_KEY, next);
 }
 
 export function resetSyncDemoData(seedTrips: SyncTrip[], seedAlerts: SyncAlert[]) {

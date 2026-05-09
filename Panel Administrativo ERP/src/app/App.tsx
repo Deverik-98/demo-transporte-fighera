@@ -68,7 +68,14 @@ function AppContent() {
       case "dashboard":
         return <Dashboard onOpenAlertsHistory={() => setCurrentView("alerts")} />;
       case "trips":
-        return <Trips />;
+        return (
+          <Trips
+            onFocusTripInMap={(tripId, zoneId) => {
+              setCurrentView("dashboard");
+              window.dispatchEvent(new CustomEvent("tf-focus-trip", { detail: { tripId, zoneId } }));
+            }}
+          />
+        );
       case "costs":
         return <Costs />;
       case "alerts":

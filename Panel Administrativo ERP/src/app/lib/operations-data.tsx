@@ -1,6 +1,7 @@
 import React, { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { expirationConfig, realtimeAlerts } from "./mock-data";
+import { generateSystemRemitoReference, isPrincipalClientCompany } from "./trip-clients";
 import { embeddedOperationalZoneFeatures } from "./embedded-operational-zone-geometries";
 import {
   getSyncDocuments,
@@ -26,7 +27,17 @@ import {
 
 export type ZoneId = string;
 type LatLngExpression = [number, number];
-export type TripStatus = "Pendiente de aceptación" | "Asignado" | "En Planta" | "Cargando" | "En Ruta" | "Entregado" | "Cancelado";
+export type TripStage =
+  | "Pendiente"
+  | "Sin chofer"
+  | "Asignado"
+  | "Aceptado"
+  | "En planta"
+  | "En ruta"
+  | "Entregado"
+  | "Cancelado"
+  | "Reprogramado";
+export type TripStatus = TripStage;
 export type ZoneConfig = {
   id: ZoneId;
   name: string;
@@ -42,7 +53,20 @@ export type Driver = { id: string; name: string; zoneId: ZoneId };
 export type UserRole = "Administrador" | "Operador" | "Supervisor" | "Chofer" | "Visualizador";
 export type UserStatus = "Activo" | "Inactivo";
 export type VehicleStatus = "Activo" | "Mantenimiento" | "Inactivo";
-export type Vehicle = { id: string; plate: string; type: "Camión" | "Remolque"; zoneId: ZoneId; brand: string; model: string; status: VehicleStatus };
+/** Propio: flota Transportes Fighera. Fletero: unidad de terceros. */
+export type VehicleFleetKind = "Propio" | "Fletero";
+export type Vehicle = {
+  id: string;
+  plate: string;
+  type: "Camión" | "Remolque";
+  zoneId: ZoneId;
+  brand: string;
+  model: string;
+  status: VehicleStatus;
+  fleetKind: VehicleFleetKind;
+  /** Detalles opcionales del vehículo (notas operativas). */
+  observations: string;
+};
 export type AppUser = { id: string; name: string; email: string; role: UserRole; status: UserStatus; zoneId: ZoneId };
 export type AuditLog = { id: number; dateTime: string; user: string; ip: string; action: string };
 export type DocumentEntityType = "user" | "vehicle";
@@ -77,10 +101,16 @@ export type PlannedTrip = {
   destination: string;
   routePath: LatLngExpression[];
   progress: number;
-  status: TripStatus;
+  status: TripStage;
+  /** Tipo de carga (denominación operativa). */
   cargo: string;
+  /** Condiciones del viaje (plan operativo). */
   plan: string;
   scheduledAt: string;
+  /** Empresa o cliente del viaje. */
+  clientCompany: string;
+  /** Número de remito (clientes principales) o código único generado por el sistema (otros). */
+  remitoNumber: string;
   timeline?: Array<{ timestamp: string; descripcion: string }>;
   evidencias?: Array<{ tipo: string; nombre: string; fecha: string }>;
 };
@@ -120,10 +150,34 @@ type TripInput = {
   cargo: string;
   plan: string;
   scheduledAt: string;
+  clientCompany: string;
+  /** Obligatorio si clientCompany es SIDERSA, Acindar o CIPLAR; ignorado en otro caso (se genera SYS-*). */
+  remitoNumber?: string;
+};
+type TripUpdateInput = {
+  zoneId: ZoneId;
+  driver: string;
+  vehiclePlate: string;
+  origin: string;
+  destination: string;
+  cargo: string;
+  plan: string;
+  scheduledAt: string;
+  clientCompany: string;
+  remitoNumber?: string;
+  status: TripStage;
 };
 
 type UserInput = { name: string; email: string; role: UserRole; zoneId: ZoneId };
-type VehicleInput = { plate: string; type: "Camión" | "Remolque"; zoneId: ZoneId; brand: string; model: string };
+type VehicleInput = {
+  plate: string;
+  type: "Camión" | "Remolque";
+  zoneId: ZoneId;
+  brand: string;
+  model: string;
+  fleetKind?: VehicleFleetKind;
+  observations?: string;
+};
 type DocumentInput = {
   entityType: DocumentEntityType;
   entityId: string;
@@ -219,6 +273,7 @@ type OperationsDataContextValue = {
   invoices: DriverInvoice[];
   expirationRules: ExpirationRule[];
   addTrip: (input: TripInput) => PlannedTrip | null;
+  updateTrip: (tripId: string, input: TripUpdateInput) => PlannedTrip | null;
   updateTripStatus: (tripId: string, status: TripStatus) => void;
   cancelTrip: (tripId: string) => void;
   removeTrip: (tripId: string) => void;
@@ -227,6 +282,8 @@ type OperationsDataContextValue = {
   removeUser: (userId: string) => void;
   addVehicle: (input: VehicleInput) => Vehicle | null;
   updateVehicleStatus: (vehicleId: string, status: VehicleStatus) => void;
+  updateVehicleFleetKind: (vehicleId: string, fleetKind: VehicleFleetKind) => void;
+  updateVehicleObservations: (vehicleId: string, observations: string) => void;
   removeVehicle: (vehicleId: string) => void;
   addDocument: (input: DocumentInput) => DocumentRecord | null;
   removeDocument: (documentId: string) => void;
@@ -339,12 +396,48 @@ function normalizeUsersData(items: AppUser[]) {
   return items.map((item) => ({ ...item, zoneId: normalizeZoneId(item.zoneId) }));
 }
 
-function normalizeVehiclesData(items: Vehicle[]) {
-  return items.map((item) => ({ ...item, zoneId: normalizeZoneId(item.zoneId) }));
-}
-
 function normalizeTripsData(items: PlannedTrip[]) {
-  return items.map((item) => ({ ...item, zoneId: normalizeZoneId(item.zoneId) }));
+  const UNASSIGNED_DRIVER_LABEL = "Sin asignar";
+  const UNASSIGNED_VEHICLE_LABEL = "Sin asignar";
+  const normalizeTripStage = (raw: string | undefined): TripStage => {
+    const status = (raw ?? "").trim().toLowerCase();
+    if (status === "pendiente de aceptación" || status === "pendiente") return "Pendiente";
+    if (status === "sin chofer") return "Sin chofer";
+    if (status === "asignado") return "Asignado";
+    if (status === "aceptado") return "Aceptado";
+    if (status === "en planta" || status === "cargando") return "En planta";
+    if (status === "en ruta") return "En ruta";
+    if (status === "entregado") return "Entregado";
+    if (status === "cancelado") return "Cancelado";
+    if (status === "reprogramado") return "Reprogramado";
+    return "Pendiente";
+  };
+  const alignTripWithStage = (trip: PlannedTrip, stage: TripStage): PlannedTrip => {
+    const driver = trip.driver?.trim() ?? "";
+    const vehiclePlate = trip.vehiclePlate?.trim() ?? "";
+    if (stage === "Sin chofer") {
+      return {
+        ...trip,
+        driver: UNASSIGNED_DRIVER_LABEL,
+        vehiclePlate: UNASSIGNED_VEHICLE_LABEL,
+      };
+    }
+    return {
+      ...trip,
+      driver: driver || "Chofer N/D",
+      vehiclePlate: vehiclePlate || "Patente N/D",
+    };
+  };
+  return items.map((item) => {
+    const normalizedStatus = normalizeTripStage(item.status);
+    return {
+      ...alignTripWithStage(item, normalizedStatus),
+      zoneId: normalizeZoneId(item.zoneId),
+      status: normalizedStatus,
+      clientCompany: item.clientCompany?.trim() || "Cliente general",
+      remitoNumber: item.remitoNumber?.trim() || `REM-${item.id}`,
+    };
+  });
 }
 
 const userDocumentTypesByRole: Record<UserRole, string[]> = {
@@ -368,13 +461,36 @@ const initialUsers: AppUser[] = [
 ];
 
 const initialVehicles: Vehicle[] = [
-  { id: "VH-01", plate: "AB123CD", type: "Camión", zoneId: "zona-bsas", brand: "Iveco", model: "Stralis", status: "Activo" },
-  { id: "VH-02", plate: "XY456EF", type: "Camión", zoneId: "zona-cordoba", brand: "Scania", model: "R450", status: "Activo" },
-  { id: "VH-03", plate: "MN789GH", type: "Camión", zoneId: "zona-santafe", brand: "Mercedes-Benz", model: "Actros", status: "Activo" },
-  { id: "VH-04", plate: "UV890MN", type: "Camión", zoneId: "zona-sanjuan", brand: "Volvo", model: "FH", status: "Mantenimiento" },
-  { id: "VH-05", plate: "RS320AA", type: "Camión", zoneId: "zona-cordoba", brand: "Mercedes-Benz", model: "Atego", status: "Activo" },
-  { id: "VH-06", plate: "VC227BB", type: "Camión", zoneId: "zona-tucuman", brand: "Volkswagen", model: "Constellation", status: "Activo" },
+  {
+    id: "VH-01",
+    plate: "AB123CD",
+    type: "Camión",
+    zoneId: "zona-bsas",
+    brand: "Iveco",
+    model: "Stralis",
+    status: "Activo",
+    fleetKind: "Propio",
+    observations: "Equipo hidráulico lateral; preferir rampas con altura mín. 1,1 m.",
+  },
+  { id: "VH-02", plate: "XY456EF", type: "Camión", zoneId: "zona-cordoba", brand: "Scania", model: "R450", status: "Activo", fleetKind: "Fletero", observations: "" },
+  { id: "VH-03", plate: "MN789GH", type: "Camión", zoneId: "zona-santafe", brand: "Mercedes-Benz", model: "Actros", status: "Activo", fleetKind: "Fletero", observations: "" },
+  { id: "VH-04", plate: "UV890MN", type: "Camión", zoneId: "zona-sanjuan", brand: "Volvo", model: "FH", status: "Mantenimiento", fleetKind: "Fletero", observations: "En taller: revisión de frenos delanteros." },
+  { id: "VH-05", plate: "RS320AA", type: "Camión", zoneId: "zona-cordoba", brand: "Mercedes-Benz", model: "Atego", status: "Activo", fleetKind: "Fletero", observations: "" },
+  { id: "VH-06", plate: "VC227BB", type: "Camión", zoneId: "zona-tucuman", brand: "Volkswagen", model: "Constellation", status: "Activo", fleetKind: "Propio", observations: "" },
 ];
+
+function normalizeVehiclesData(items: Vehicle[]) {
+  const seedFleetById = new Map(initialVehicles.map((v) => [v.id, v.fleetKind]));
+  return items.map((item) => ({
+    ...item,
+    zoneId: normalizeZoneId(item.zoneId),
+    observations: typeof item.observations === "string" ? item.observations : "",
+    fleetKind:
+      item.fleetKind === "Fletero" || item.fleetKind === "Propio"
+        ? item.fleetKind
+        : seedFleetById.get(item.id) ?? "Propio",
+  }));
+}
 
 const initialDocuments: DocumentRecord[] = [
   {
@@ -554,10 +670,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "La Plata",
     routePath: initialRouteTemplates[0].path,
     progress: 62,
-    status: "En Ruta",
+    status: "En ruta",
     cargo: "Insumos alimenticios - 19 toneladas",
     plan: "Salida 06:00, control en peaje Campana, entrega 17:30.",
     scheduledAt: "2026-04-30T15:00",
+    clientCompany: "SIDERSA",
+    remitoNumber: "R-458821",
     timeline: [],
     evidencias: [],
   },
@@ -570,10 +688,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "Rafaela",
     routePath: initialRouteTemplates[1].path,
     progress: 28,
-    status: "Cargando",
+    status: "En planta",
     cargo: "Acero laminado - 23 toneladas",
     plan: "Carga en planta 09:00, salida estimada 11:15.",
     scheduledAt: "2026-04-30T18:00",
+    clientCompany: "Acindar",
+    remitoNumber: "R-772910",
     timeline: [],
     evidencias: [],
   },
@@ -586,10 +706,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "San Juan",
     routePath: initialRouteTemplates[2].path,
     progress: 75,
-    status: "En Ruta",
+    status: "Entregado",
     cargo: "Paquetería seca - 8 toneladas",
     plan: "Ruta costera con parada de control a mitad de tramo.",
     scheduledAt: "2026-05-01T09:30",
+    clientCompany: "CIPLAR",
+    remitoNumber: "R-339210",
     timeline: [],
     evidencias: [],
   },
@@ -602,10 +724,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "San Miguel de Tucumán",
     routePath: initialRouteTemplates[3].path,
     progress: 10,
-    status: "Asignado",
+    status: "Aceptado",
     cargo: "Enlatados y bebidas - 14 toneladas",
     plan: "Salida 15:00, ventana de descarga 20:00.",
     scheduledAt: "2026-05-01T15:00",
+    clientCompany: "Distribuidora Norte S.A.",
+    remitoNumber: "SYS-01004-K9M2PLQX",
     timeline: [],
     evidencias: [],
   },
@@ -618,10 +742,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "Villa María",
     routePath: initialRouteTemplates[4].path,
     progress: 0,
-    status: "Pendiente de aceptación",
+    status: "Pendiente",
     cargo: "Insumos farmacéuticos - 6 toneladas",
     plan: "Salida 07:30 por corredor sur cordobés.",
     scheduledAt: "2026-05-01T07:30",
+    clientCompany: "SIDERSA",
+    remitoNumber: "R-882301",
     timeline: [],
     evidencias: [],
   },
@@ -634,26 +760,30 @@ const initialTrips: PlannedTrip[] = [
     destination: "Zárate",
     routePath: initialRouteTemplates[5].path,
     progress: 18,
-    status: "En Planta",
+    status: "En planta",
     cargo: "Rollos de acero - 20 toneladas",
     plan: "Ingreso a planta siderúrgica y despacho en ventana AM.",
     scheduledAt: "2026-05-01T11:00",
+    clientCompany: "Acindar",
+    remitoNumber: "R-991402",
     timeline: [],
     evidencias: [],
   },
   {
     id: "VJ-1007",
     zoneId: "zona-bsas",
-    driver: "Carlos Rodríguez",
-    vehiclePlate: "AB123CD",
+    driver: "Sin asignar",
+    vehiclePlate: "Sin asignar",
     origin: "Buenos Aires",
     destination: "La Plata",
     routePath: initialRouteTemplates[0].path,
     progress: 5,
-    status: "Asignado",
+    status: "Sin chofer",
     cargo: "Material eléctrico - 7 toneladas",
     plan: "Salida nocturna con descarga temprana.",
     scheduledAt: "2026-05-01T22:15",
+    clientCompany: "Metalúrgica Sur",
+    remitoNumber: "SYS-01007-NP4QS8W2",
     timeline: [],
     evidencias: [],
   },
@@ -666,10 +796,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "Rafaela",
     routePath: initialRouteTemplates[1].path,
     progress: 42,
-    status: "En Ruta",
+    status: "En ruta",
     cargo: "Bebidas - 12 toneladas",
     plan: "Entrega en centros de distribución costeros.",
     scheduledAt: "2026-05-02T09:00",
+    clientCompany: "CIPLAR",
+    remitoNumber: "R-110034",
     timeline: [],
     evidencias: [],
   },
@@ -682,10 +814,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "San Juan",
     routePath: initialRouteTemplates[2].path,
     progress: 0,
-    status: "Pendiente de aceptación",
+    status: "Reprogramado",
     cargo: "Insumos vitivinícolas - 11 toneladas",
     plan: "Ruta en corredor andino con control documental.",
     scheduledAt: "2026-05-02T07:45",
+    clientCompany: "Logística Integral S.A.",
+    remitoNumber: "SYS-01009-ZY7XW3V1",
     timeline: [],
     evidencias: [],
   },
@@ -698,10 +832,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "San Miguel de Tucumán",
     routePath: initialRouteTemplates[3].path,
     progress: 33,
-    status: "Cargando",
+    status: "En planta",
     cargo: "Cargas generales - 9 toneladas",
     plan: "Consolidación en base Salta y despacho mediodía.",
     scheduledAt: "2026-05-02T13:10",
+    clientCompany: "SIDERSA",
+    remitoNumber: "R-220011",
     timeline: [],
     evidencias: [],
   },
@@ -714,10 +850,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "Villa María",
     routePath: initialRouteTemplates[4].path,
     progress: 61,
-    status: "En Ruta",
+    status: "Cancelado",
     cargo: "Agroinsumos - 16 toneladas",
     plan: "Entrega interior sur de la provincia de Córdoba.",
     scheduledAt: "2026-05-02T05:50",
+    clientCompany: "Acindar",
+    remitoNumber: "R-330922",
     timeline: [],
     evidencias: [],
   },
@@ -730,10 +868,12 @@ const initialTrips: PlannedTrip[] = [
     destination: "Zárate",
     routePath: initialRouteTemplates[5].path,
     progress: 0,
-    status: "Pendiente de aceptación",
+    status: "Pendiente",
     cargo: "Perfiles metálicos - 13 toneladas",
     plan: "Despacho escalonado para ventana de recepción PM.",
     scheduledAt: "2026-05-02T15:30",
+    clientCompany: "Cliente varios",
+    remitoNumber: "SYS-01012-HJ6KL4MN",
     timeline: [],
     evidencias: [],
   },
@@ -746,6 +886,9 @@ const initialSyncAlerts: SyncAlert[] = realtimeAlerts.map((alert) => ({
   severity: alert.severity === "Alta" ? "Alta" : "Media",
   source: "web",
   status: "Activa",
+  alertKind: alert.alertKind,
+  vehiclePlate: alert.vehiclePlate,
+  tripId: alert.tripId,
 }));
 
 const OperationsDataContext = createContext<OperationsDataContextValue | null>(null);
@@ -1038,9 +1181,20 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         if (!driver || !vehicle || !route) return null;
         if (!input.cargo.trim() || !input.plan.trim()) return null;
 
+        const clientCompany = input.clientCompany.trim();
+        if (!clientCompany) return null;
+
         const zoneExists = zonesState.some((zone) => zone.id === input.zoneId);
         if (!zoneExists) return null;
         const sequence = 1000 + trips.length + 1;
+        const manualRemito = input.remitoNumber?.trim() ?? "";
+        let remitoNumber: string;
+        if (isPrincipalClientCompany(clientCompany)) {
+          if (!manualRemito) return null;
+          remitoNumber = manualRemito;
+        } else {
+          remitoNumber = generateSystemRemitoReference(sequence);
+        }
         const newTrip: PlannedTrip = {
           id: `VJ-${sequence}`,
           zoneId: input.zoneId,
@@ -1050,10 +1204,12 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           destination: route.destination,
           routePath: route.path,
           progress: 0,
-          status: "Pendiente de aceptación",
+          status: "Pendiente",
           cargo: input.cargo.trim(),
           plan: input.plan.trim(),
           scheduledAt: input.scheduledAt || new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
+          clientCompany,
+          remitoNumber,
           timeline: [],
           evidencias: [],
         };
@@ -1067,7 +1223,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
               trip.id === newTrip.id
                 ? {
                     ...trip,
-                    status: "Asignado",
+                    status: "Aceptado",
                     progress: 10,
                   }
                 : trip,
@@ -1078,6 +1234,62 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           });
         }, 6000);
         return newTrip;
+      },
+      updateTrip: (tripId, input) => {
+        const target = trips.find((trip) => trip.id === tripId);
+        if (!target) return null;
+
+        const clientCompany = input.clientCompany.trim();
+        if (!clientCompany) return null;
+
+        const trimmedDriver = input.driver.trim();
+        const trimmedPlate = input.vehiclePlate.trim().toUpperCase();
+        const origin = input.origin.trim();
+        const destination = input.destination.trim();
+        const cargo = input.cargo.trim();
+        const plan = input.plan.trim();
+        if (!origin || !destination || !cargo || !plan) return null;
+
+        const zoneExists = zonesState.some((zone) => zone.id === input.zoneId);
+        if (!zoneExists) return null;
+
+        let remitoNumber = input.remitoNumber?.trim() ?? "";
+        if (isPrincipalClientCompany(clientCompany)) {
+          if (!remitoNumber) return null;
+        } else if (!remitoNumber) {
+          const sequence = Number(target.id.replace(/\D/g, "")) || 1000 + trips.length + 1;
+          remitoNumber = generateSystemRemitoReference(sequence);
+        }
+
+        const normalizedDriver =
+          input.status === "Sin chofer" ? "Sin asignar" : trimmedDriver || "Chofer N/D";
+        const normalizedVehicle =
+          input.status === "Sin chofer" ? "Sin asignar" : trimmedPlate || "Patente N/D";
+
+        const updatedTrip: PlannedTrip = {
+          ...target,
+          zoneId: input.zoneId,
+          driver: normalizedDriver,
+          vehiclePlate: normalizedVehicle,
+          origin,
+          destination,
+          cargo,
+          plan,
+          scheduledAt: input.scheduledAt || target.scheduledAt,
+          clientCompany,
+          remitoNumber,
+          status: input.status,
+          progress:
+            input.status === "Entregado"
+              ? 100
+              : input.status === "Cancelado"
+                ? 0
+                : target.progress,
+        };
+
+        updateTrips((prev) => prev.map((trip) => (trip.id === tripId ? updatedTrip : trip)));
+        toast.success(`Viaje ${tripId} actualizado`);
+        return updatedTrip;
       },
       updateTripStatus: (tripId, status) => {
         updateTrips((prev) =>
@@ -1147,6 +1359,8 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           brand: input.brand.trim(),
           model: input.model.trim(),
           status: "Activo",
+          fleetKind: input.fleetKind === "Fletero" ? "Fletero" : "Propio",
+          observations: input.observations?.trim() ?? "",
         };
         updateVehicles((prev) => [vehicle, ...prev]);
         toast.success(`Vehículo ${vehicle.plate} creado`);
@@ -1156,14 +1370,31 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         updateVehicles((prev) => prev.map((vehicle) => (vehicle.id === vehicleId ? { ...vehicle, status } : vehicle)));
         toast.message(`Estado de vehículo actualizado a ${status}`);
       },
+      updateVehicleFleetKind: (vehicleId, fleetKind) => {
+        updateVehicles((prev) =>
+          prev.map((vehicle) => (vehicle.id === vehicleId ? { ...vehicle, fleetKind } : vehicle)),
+        );
+        toast.message(`Vehículo marcado como ${fleetKind === "Propio" ? "propio" : "fletero"}`);
+      },
+      updateVehicleObservations: (vehicleId, observations) => {
+        updateVehicles((prev) =>
+          prev.map((vehicle) => (vehicle.id === vehicleId ? { ...vehicle, observations: observations.trim() } : vehicle)),
+        );
+        toast.message("Observaciones del vehículo actualizadas");
+      },
       removeVehicle: (vehicleId) => {
         updateVehicles((prev) => prev.filter((vehicle) => vehicle.id !== vehicleId));
         updateDocuments((prev) => prev.filter((doc) => !(doc.entityType === "vehicle" && doc.entityId === vehicleId)));
       },
       addDocument: (input) => {
-        if (!input.entityId || !input.documentType || !input.expiresAt || !input.fileName) return null;
+        const targetVehicle = input.entityType === "vehicle" ? vehicles.find((item) => item.id === input.entityId) : undefined;
+        const fleteroVehiculo = targetVehicle?.fleetKind === "Fletero";
+        if (!input.entityId || !input.documentType || !input.fileName) return null;
+        const expiresRaw = input.expiresAt?.trim() ?? "";
+        if (!fleteroVehiculo && !expiresRaw) return null;
+        const expiresAt = fleteroVehiculo && !expiresRaw ? "2099-12-31" : expiresRaw;
         const today = new Date();
-        const exp = new Date(input.expiresAt);
+        const exp = new Date(expiresAt);
         const days = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         const status: DocumentRecord["status"] = days < 0 ? "Vencido" : days <= 30 ? "Próximo a vencer" : "Vigente";
         const doc: DocumentRecord = {
@@ -1171,7 +1402,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           entityType: input.entityType,
           entityId: input.entityId,
           documentType: input.documentType,
-          expiresAt: input.expiresAt,
+          expiresAt,
           status,
           notes: input.notes.trim(),
           fileName: input.fileName,

@@ -1,12 +1,12 @@
 export const trips = [
-  { id: "VJ-1001", origin: "Buenos Aires, AR", destination: "Montevideo, UY", driver: "Juan Pérez", plate: "AB123CD", status: "En Ruta" },
-  { id: "VJ-1002", origin: "Rosario, AR", destination: "Córdoba, AR", driver: "María González", plate: "XY456EF", status: "Cargando" },
+  { id: "VJ-1001", origin: "Buenos Aires, AR", destination: "Montevideo, UY", driver: "Juan Pérez", plate: "AB123CD", status: "En ruta" },
+  { id: "VJ-1002", origin: "Rosario, AR", destination: "Córdoba, AR", driver: "María González", plate: "XY456EF", status: "En planta" },
   { id: "VJ-1003", origin: "Montevideo, UY", destination: "Punta del Este, UY", driver: "Carlos Rodríguez", plate: "MN789GH", status: "Entregado" },
-  { id: "VJ-1004", origin: "Mendoza, AR", destination: "Santiago, CL", driver: "Roberto Silva", plate: "PQ234IJ", status: "En Planta" },
+  { id: "VJ-1004", origin: "Mendoza, AR", destination: "Santiago, CL", driver: "Roberto Silva", plate: "PQ234IJ", status: "Asignado" },
   { id: "VJ-1005", origin: "La Plata, AR", destination: "Mar del Plata, AR", driver: "Ana Martínez", plate: "ST567KL", status: "Asignado" },
-  { id: "VJ-1006", origin: "Colonia, UY", destination: "Buenos Aires, AR", driver: "Diego Fernández", plate: "UV890MN", status: "En Ruta" },
-  { id: "VJ-1007", origin: "Tucumán, AR", destination: "Salta, AR", driver: "Laura Sánchez", plate: "WX123OP", status: "Cargando" },
-  { id: "VJ-1008", origin: "Buenos Aires, AR", destination: "Asunción, PY", driver: "Miguel Torres", plate: "YZ456QR", status: "En Ruta" },
+  { id: "VJ-1006", origin: "Colonia, UY", destination: "Buenos Aires, AR", driver: "Diego Fernández", plate: "UV890MN", status: "Aceptado" },
+  { id: "VJ-1007", origin: "Tucumán, AR", destination: "Salta, AR", driver: "Laura Sánchez", plate: "WX123OP", status: "Sin chofer" },
+  { id: "VJ-1008", origin: "Buenos Aires, AR", destination: "Asunción, PY", driver: "Miguel Torres", plate: "YZ456QR", status: "Reprogramado" },
 ];
 
 export const alerts = [
@@ -103,12 +103,64 @@ export const zones = [
   },
 ];
 
-export const realtimeAlerts = [
-  { id: 1, time: "14:32", message: "Desvío detectado en Ruta 9 - Vehículo AB123CD", severity: "Alta" },
-  { id: 2, time: "14:15", message: "Retraso de 45min - Viaje VJ-1002 (Rosario → Córdoba)", severity: "Media" },
-  { id: 3, time: "13:58", message: "VTV del camión XY456EF vence en 7 días", severity: "Media" },
-  { id: 4, time: "13:22", message: "Chofer Roberto Silva: Licencia vence en 5 días", severity: "Alta" },
-  { id: 5, time: "12:45", message: "Parada no autorizada detectada - Vehículo WX123OP", severity: "Media" },
+export type RealtimeAlertSeed = {
+  id: number;
+  time: string;
+  message: string;
+  severity: string;
+  alertKind?: "vehicle_documentation" | "operational" | "driver_documentation";
+  vehiclePlate?: string;
+  tripId?: string;
+};
+
+export const realtimeAlerts: RealtimeAlertSeed[] = [
+  {
+    id: 1,
+    time: "14:32",
+    message: "Desvío detectado en Ruta 9 - Vehículo AB123CD",
+    severity: "Alta",
+    alertKind: "operational",
+    vehiclePlate: "AB123CD",
+  },
+  {
+    id: 2,
+    time: "14:15",
+    message: "Retraso de 45min - Viaje VJ-1002 (Rosario → Córdoba)",
+    severity: "Media",
+    alertKind: "operational",
+    tripId: "VJ-1002",
+  },
+  {
+    id: 3,
+    time: "13:58",
+    message: "VTV del camión XY456EF vence en 7 días",
+    severity: "Media",
+    alertKind: "vehicle_documentation",
+    vehiclePlate: "XY456EF",
+  },
+  {
+    id: 4,
+    time: "13:22",
+    message: "Chofer Roberto Silva: Licencia vence en 5 días",
+    severity: "Alta",
+    alertKind: "driver_documentation",
+  },
+  {
+    id: 5,
+    time: "12:45",
+    message: "Parada no autorizada detectada - Vehículo WX123OP",
+    severity: "Media",
+    alertKind: "operational",
+    vehiclePlate: "WX123OP",
+  },
+  {
+    id: 6,
+    time: "12:30",
+    message: "VTV del camión AB123CD vence en 15 días",
+    severity: "Media",
+    alertKind: "vehicle_documentation",
+    vehiclePlate: "AB123CD",
+  },
 ];
 
 export const monthlyChartData = [

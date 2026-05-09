@@ -4,11 +4,13 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { AlertCircle, CheckCircle, Filter } from "lucide-react";
 import { realtimeAlerts } from "../../lib/mock-data";
-import { resolveSyncAlert, useSyncAlerts } from "../../lib/sync-store";
+import { filterAlertsByFleetDocumentationPolicy, resolveSyncAlert, useSyncAlerts } from "../../lib/sync-store";
+import { useOperationsData } from "../../lib/operations-data";
 
 export function Alerts() {
+  const { vehicles } = useOperationsData();
   const [filter, setFilter] = useState<string>("all");
-  const alerts = useSyncAlerts(
+  const alertsRaw = useSyncAlerts(
     realtimeAlerts.map((alert) => ({
       id: String(alert.id),
       time: alert.time,
@@ -16,7 +18,14 @@ export function Alerts() {
       severity: alert.severity === "Alta" ? "Alta" : "Media",
       source: "web" as const,
       status: "Activa" as const,
+      alertKind: alert.alertKind,
+      vehiclePlate: alert.vehiclePlate,
+      tripId: alert.tripId,
     })),
+  );
+  const alerts = useMemo(
+    () => filterAlertsByFleetDocumentationPolicy(alertsRaw, vehicles),
+    [alertsRaw, vehicles],
   );
 
   const filteredAlerts = useMemo(

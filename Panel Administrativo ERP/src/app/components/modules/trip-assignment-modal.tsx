@@ -6,6 +6,7 @@ import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { useOperationsData, ZoneId } from "../../lib/operations-data";
+import { PRINCIPAL_CLIENT_COMPANIES, isPrincipalClientCompany } from "../../lib/trip-clients";
 import { CalendarClock, MapPinned, Plus } from "lucide-react";
 import { toast } from "sonner";
 import L from "leaflet";
@@ -136,6 +137,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
     cargo: "",
     plan: "",
     scheduledAt: "",
+    clientCompanySelect: "SIDERSA" as "SIDERSA" | "Acindar" | "CIPLAR" | "otra",
+    clientCompanyOther: "",
+    remitoNumber: "",
   });
   const [manualRouteOrigin, setManualRouteOrigin] = useState("");
   const [manualRouteDestination, setManualRouteDestination] = useState("");
@@ -156,6 +160,11 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
   const filteredVehicles = vehicles.filter((vehicle) => vehicle.type === "Camión");
   const filteredRoutes = routeTemplates.filter((route) => route.zoneId === assignmentForm.zoneId);
   const selectedZone = zones.find((zone) => zone.id === assignmentForm.zoneId);
+  const resolvedClientPreview = useMemo(() => {
+    if (assignmentForm.clientCompanySelect !== "otra") return assignmentForm.clientCompanySelect;
+    return assignmentForm.clientCompanyOther.trim();
+  }, [assignmentForm.clientCompanySelect, assignmentForm.clientCompanyOther]);
+  const requiresRemitoInput = isPrincipalClientCompany(resolvedClientPreview);
   const mapCenter = useMemo<LatLngExpression>(() => {
     const center = selectedZone?.mapCenter;
     if (!center || !Number.isFinite(center[0]) || !Number.isFinite(center[1])) {
@@ -219,6 +228,18 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       setManualRouteOrigin("");
       setManualRouteDestination("");
       setMapSelectionTarget("origin");
+      setAssignmentForm({
+        zoneId: (zones[0]?.id ?? "") as ZoneId,
+        driverId: "",
+        vehicleId: "",
+        routeId: "",
+        cargo: "",
+        plan: "",
+        scheduledAt: "",
+        clientCompanySelect: "SIDERSA",
+        clientCompanyOther: "",
+        remitoNumber: "",
+      });
     }
   }
 
@@ -257,7 +278,20 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       return;
     }
     if (!assignmentForm.cargo.trim() || !assignmentForm.plan.trim()) {
-      toast.error("Completa carga y plan de viaje para continuar.");
+      toast.error("Completá tipo de carga y condiciones de viaje para continuar.");
+      return;
+    }
+
+    const clientCompany =
+      assignmentForm.clientCompanySelect !== "otra"
+        ? assignmentForm.clientCompanySelect
+        : assignmentForm.clientCompanyOther.trim();
+    if (!clientCompany) {
+      toast.error("Indicá la empresa o cliente del viaje.");
+      return;
+    }
+    if (isPrincipalClientCompany(clientCompany) && !assignmentForm.remitoNumber.trim()) {
+      toast.error("Para SIDERSA, Acindar o CIPLAR debés ingresar el número de remito.");
       return;
     }
 
@@ -292,6 +326,8 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       cargo: assignmentForm.cargo,
       plan: assignmentForm.plan,
       scheduledAt: resolvedScheduledAt,
+      clientCompany,
+      remitoNumber: isPrincipalClientCompany(clientCompany) ? assignmentForm.remitoNumber.trim() : undefined,
     });
     if (!trip) {
       toast.error("No se pudo crear el viaje. Revisa los datos e intenta nuevamente.");
@@ -307,6 +343,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       cargo: "",
       plan: "",
       scheduledAt: resolvedScheduledAt,
+      clientCompanySelect: "SIDERSA",
+      clientCompanyOther: "",
+      remitoNumber: "",
     }));
   }
 
@@ -357,6 +396,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                       cargo: "",
                       plan: "",
                       scheduledAt: new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
+                      clientCompanySelect: "SIDERSA",
+                      clientCompanyOther: "",
+                      remitoNumber: "",
                     })
                   }
                 >
@@ -500,6 +542,67 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
             </section>
           ) : null}
 
+          <section aria-labelledby="trip-assign-client" className="space-y-3 rounded-lg border border-border/80 bg-muted/15 p-4">
+            <h3 id="trip-assign-client" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Empresa / cliente y remito
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2 lg:col-span-1">
+                <Label>Empresa o cliente</Label>
+                <Select
+                  value={assignmentForm.clientCompanySelect}
+                  onValueChange={(value: "SIDERSA" | "Acindar" | "CIPLAR" | "otra") =>
+                    setAssignmentForm((prev) => ({ ...prev, clientCompanySelect: value }))
+                  }
+                >
+                  <SelectTrigger className="h-10 w-full">
+                    <SelectValue placeholder="Seleccionar" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[1700]">
+                    {PRINCIPAL_CLIENT_COMPANIES.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="otra">Otra empresa o cliente</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {assignmentForm.clientCompanySelect === "otra" ? (
+                <div className="space-y-2 sm:col-span-2 lg:col-span-1">
+                  <Label htmlFor="trip-client-other">Nombre del cliente</Label>
+                  <Input
+                    id="trip-client-other"
+                    className="h-10"
+                    value={assignmentForm.clientCompanyOther}
+                    onChange={(event) => setAssignmentForm((prev) => ({ ...prev, clientCompanyOther: event.target.value }))}
+                    placeholder="Ej: Distribuidora regional"
+                    required
+                  />
+                </div>
+              ) : null}
+              <div className="space-y-2 sm:col-span-2">
+                {requiresRemitoInput ? (
+                  <>
+                    <Label htmlFor="trip-remito">Número de remito</Label>
+                    <Input
+                      id="trip-remito"
+                      className="h-10 max-w-md"
+                      value={assignmentForm.remitoNumber}
+                      onChange={(event) => setAssignmentForm((prev) => ({ ...prev, remitoNumber: event.target.value }))}
+                      placeholder="Ej: R-458821"
+                      required
+                    />
+                  </>
+                ) : resolvedClientPreview ? (
+                  <p className="text-xs text-muted-foreground">
+                    No hace falta remito: al guardar se asignará un código único generado por el sistema (prefijo SYS-).
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </section>
+
           <section aria-labelledby="trip-assign-detail" className="space-y-3">
             <h3 id="trip-assign-detail" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Programación y detalle
@@ -508,7 +611,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  Fecha y hora
+                  Fecha del viaje
                 </Label>
                 <Input
                   type="datetime-local"
@@ -519,7 +622,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                 />
               </div>
               <div className="space-y-2">
-                <Label>Carga</Label>
+                <Label>Tipo de carga</Label>
                 <Input
                   className="h-10"
                   value={assignmentForm.cargo}
@@ -530,7 +633,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Plan de viaje</Label>
+              <Label>Condiciones de viaje</Label>
               <Textarea
                 value={assignmentForm.plan}
                 onChange={(event) => setAssignmentForm((prev) => ({ ...prev, plan: event.target.value }))}

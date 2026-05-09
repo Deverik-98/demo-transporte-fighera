@@ -154,6 +154,12 @@ export function DocumentsModule() {
       toast.error("Adjunta una imagen o PDF del documento.");
       return;
     }
+    const selectedVehicle = vehicles.find((vehicle) => vehicle.id === form.entityId);
+    const fleteroDocOpcional = activeTab === "vehicle" && selectedVehicle?.fleetKind === "Fletero";
+    if (!fleteroDocOpcional && !form.expiresAt?.trim()) {
+      toast.error("Indicá la fecha de vencimiento del documento.");
+      return;
+    }
     const created = addDocument(form);
     if (!created) return;
     setIsOpen(false);
@@ -295,8 +301,20 @@ export function DocumentsModule() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Vencimiento</Label>
-                  <Input type="date" value={form.expiresAt} onChange={(e) => setForm((prev) => ({ ...prev, expiresAt: e.target.value }))} required />
+                  <Label>
+                    Vencimiento
+                    {activeTab === "vehicle" && vehicles.find((v) => v.id === form.entityId)?.fleetKind === "Fletero"
+                      ? " (opcional, fletero)"
+                      : null}
+                  </Label>
+                  <Input
+                    type="date"
+                    value={form.expiresAt}
+                    onChange={(e) => setForm((prev) => ({ ...prev, expiresAt: e.target.value }))}
+                    required={
+                      !(activeTab === "vehicle" && vehicles.find((v) => v.id === form.entityId)?.fleetKind === "Fletero")
+                    }
+                  />
                 </div>
               </div>
               <div className="space-y-2">

@@ -2,13 +2,13 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
-import { useOperationsData, VehicleStatus, ZoneId } from "../../lib/operations-data";
-import { FileUp, Plus, Search, Trash2, Truck } from "lucide-react";
+import { useOperationsData, VehicleFleetKind, VehicleStatus, ZoneId } from "../../lib/operations-data";
+import { FileUp, MessageSquare, Plus, Search, Trash2, Truck } from "lucide-react";
 import { AssociatedDocumentsDialog } from "./associated-documents-dialog";
 import { toast } from "sonner";
 
@@ -23,18 +23,33 @@ type VehicleDocDraft = {
 };
 
 export function VehiclesModule() {
-  const { zones, vehicles, addVehicle, updateVehicleStatus, removeVehicle, documents, addDocument, vehicleDocumentTypes } = useOperationsData();
+  const {
+    zones,
+    vehicles,
+    addVehicle,
+    updateVehicleStatus,
+    updateVehicleFleetKind,
+    updateVehicleObservations,
+    removeVehicle,
+    documents,
+    addDocument,
+    vehicleDocumentTypes,
+  } = useOperationsData();
   const defaultZoneId = zones[0]?.id ?? "";
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<VehicleStatus | "all">("all");
+  const [fleetFilter, setFleetFilter] = useState<"all" | VehicleFleetKind>("all");
   const [form, setForm] = useState({
     plate: "",
     type: "Camión" as "Camión" | "Remolque",
     zoneId: defaultZoneId as ZoneId,
     brand: "",
     model: "",
+    fleetKind: "Propio" as VehicleFleetKind,
+    observations: "",
   });
+  const [obsEdit, setObsEdit] = useState<{ vehicleId: string; plate: string; text: string } | null>(null);
   const [docsDraft, setDocsDraft] = useState<VehicleDocDraft[]>([
     {
       id: "draft-1",
@@ -49,6 +64,13 @@ export function VehiclesModule() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (form.fleetKind === "Propio") {
+      const hasCompleteDoc = docsDraft.some((draft) => draft.documentType && draft.expiresAt && draft.fileName);
+      if (!hasCompleteDoc) {
+        toast.error("Flota propia: indicá al menos un documento completo (tipo, vencimiento y adjunto).");
+        return;
+      }
+    }
     const created = addVehicle(form);
     if (!created) return;
     docsDraft.forEach((draft) => {
@@ -65,7 +87,7 @@ export function VehiclesModule() {
       });
     });
     setIsOpen(false);
-    setForm((prev) => ({ ...prev, plate: "", brand: "", model: "" }));
+    setForm((prev) => ({ ...prev, plate: "", brand: "", model: "", fleetKind: "Propio", observations: "" }));
     setDocsDraft([
       {
         id: "draft-1",
@@ -122,11 +144,13 @@ export function VehiclesModule() {
         const matchesQuery =
           !query ||
           vehicle.plate.toLowerCase().includes(query) ||
-          `${vehicle.brand} ${vehicle.model}`.toLowerCase().includes(query);
+          `${vehicle.brand} ${vehicle.model}`.toLowerCase().includes(query) ||
+          vehicle.observations.toLowerCase().includes(query);
         const matchesStatus = statusFilter === "all" ? true : vehicle.status === statusFilter;
-        return matchesQuery && matchesStatus;
+        const matchesFleet = fleetFilter === "all" ? true : vehicle.fleetKind === fleetFilter;
+        return matchesQuery && matchesStatus && matchesFleet;
       }),
-    [vehicles, search, statusFilter],
+    [vehicles, search, statusFilter, fleetFilter],
   );
 
   useEffect(() => {
@@ -176,20 +200,47 @@ export function VehiclesModule() {
                   </Select>
                 </div>
                 <div className="space-y-2">
+                  <Label>Titularidad</Label>
+                  <Select
+                    value={form.fleetKind}
+                    onValueChange={(value: VehicleFleetKind) => setForm((prev) => ({ ...prev, fleetKind: value }))}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Propio">Propio (Transportes Fighera)</SelectItem>
+                      <SelectItem value="Fletero">Fletero (terceros)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
                   <Label>Marca</Label>
                   <Input value={form.brand} onChange={(e) => setForm((prev) => ({ ...prev, brand: e.target.value }))} required />
                 </div>
-                <div className="space-y-2 col-span-2">
+                <div className="space-y-2">
                   <Label>Modelo</Label>
                   <Input value={form.model} onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value }))} required />
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Observaciones (opcional)</Label>
+                <Textarea
+                  value={form.observations}
+                  onChange={(e) => setForm((prev) => ({ ...prev, observations: e.target.value }))}
+                  placeholder="Equipamiento, restricciones de carga, contacto de titular, etc."
+                  className="min-h-[80px] resize-y"
+                />
               </div>
 
               <div className="rounded-lg border p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <p>Documentos iniciales del vehículo</p>
-                    <p className="text-xs text-muted-foreground">Carga VTV, seguro y otros documentos en el mismo flujo.</p>
+                    <p className="text-xs text-muted-foreground">
+                      {form.fleetKind === "Propio"
+                        ? "Obligatorio: al menos un documento con tipo, fecha de vencimiento y adjunto (VTV, seguro, etc.)."
+                        : "Opcional para fleteros: podés guardar el vehículo sin documentación o cargarla si la tenés."}
+                    </p>
                   </div>
                   <Button type="button" variant="outline" onClick={addDraftRow}>
                     <Plus className="mr-2 h-4 w-4" />
@@ -245,6 +296,36 @@ export function VehiclesModule() {
             </form>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={obsEdit !== null} onOpenChange={(open) => !open && setObsEdit(null)}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Observaciones — {obsEdit?.plate}</DialogTitle>
+              <DialogDescription>Notas internas sobre la unidad; quedan guardadas en la flota.</DialogDescription>
+            </DialogHeader>
+            <Textarea
+              value={obsEdit?.text ?? ""}
+              onChange={(e) => setObsEdit((prev) => (prev ? { ...prev, text: e.target.value } : null))}
+              placeholder="Detalle opcional del vehículo..."
+              className="min-h-[120px] resize-y"
+            />
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setObsEdit(null)}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  if (!obsEdit) return;
+                  updateVehicleObservations(obsEdit.vehicleId, obsEdit.text);
+                  setObsEdit(null);
+                }}
+              >
+                Guardar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <Card>
@@ -254,12 +335,12 @@ export function VehiclesModule() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder="Buscar por patente, marca o modelo..."
+                placeholder="Buscar por patente, marca, modelo u observaciones..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:w-[360px]">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:w-[min(100%,720px)]">
               <Select value={statusFilter} onValueChange={(value: VehicleStatus | "all") => setStatusFilter(value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -269,7 +350,15 @@ export function VehiclesModule() {
                   <SelectItem value="Inactivo">Inactivo</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="outline" onClick={() => { setSearch(""); setStatusFilter("all"); }}>
+              <Select value={fleetFilter} onValueChange={(value: "all" | VehicleFleetKind) => setFleetFilter(value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toda la titularidad</SelectItem>
+                  <SelectItem value="Propio">Solo propios</SelectItem>
+                  <SelectItem value="Fletero">Solo fleteros</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" className="sm:col-span-2 lg:col-span-1" onClick={() => { setSearch(""); setStatusFilter("all"); setFleetFilter("all"); }}>
                 Limpiar filtros
               </Button>
             </div>
@@ -291,8 +380,10 @@ export function VehiclesModule() {
                 <tr className="border-b border-border">
                   <th className="p-3 text-left">Patente</th>
                   <th className="p-3 text-left">Tipo</th>
+                  <th className="p-3 text-left">Titularidad</th>
                   <th className="p-3 text-left">Marca/Modelo</th>
                   <th className="p-3 text-left">Zona</th>
+                  <th className="p-3 text-left">Observaciones</th>
                   <th className="p-3 text-left">Estado</th>
                   <th className="p-3 text-left">Acciones</th>
                 </tr>
@@ -302,8 +393,36 @@ export function VehiclesModule() {
                   <tr key={vehicle.id} className="border-b border-border">
                     <td className="p-3">{vehicle.plate}</td>
                     <td className="p-3">{vehicle.type}</td>
+                    <td className="p-3">
+                      <Select
+                        value={vehicle.fleetKind}
+                        onValueChange={(value: VehicleFleetKind) => updateVehicleFleetKind(vehicle.id, value)}
+                      >
+                        <SelectTrigger className="h-8 w-[200px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Propio">Propio</SelectItem>
+                          <SelectItem value="Fletero">Fletero</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </td>
                     <td className="p-3">{vehicle.brand} {vehicle.model}</td>
                     <td className="p-3">{zones.find((zone) => zone.id === vehicle.zoneId)?.name}</td>
+                    <td className="p-3 max-w-[220px]">
+                      <p className="truncate text-sm text-muted-foreground" title={vehicle.observations || undefined}>
+                        {vehicle.observations || "—"}
+                      </p>
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="h-auto gap-1 p-0 text-xs"
+                        onClick={() =>
+                          setObsEdit({ vehicleId: vehicle.id, plate: vehicle.plate, text: vehicle.observations })
+                        }
+                      >
+                        <MessageSquare className="h-3 w-3" />
+                        Editar
+                      </Button>
+                    </td>
                     <td className="p-3">
                       <Select value={vehicle.status} onValueChange={(value: VehicleStatus) => updateVehicleStatus(vehicle.id, value)}>
                         <SelectTrigger className="h-8 w-[180px]"><SelectValue /></SelectTrigger>

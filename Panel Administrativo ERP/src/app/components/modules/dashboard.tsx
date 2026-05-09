@@ -7,19 +7,22 @@ import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { realtimeAlerts } from "../../lib/mock-data";
-import { AlertTriangle, Clock, Filter, MapPin, Search } from "lucide-react";
-import { useOperationsData, ZoneId, TripStatus, PlannedTrip } from "../../lib/operations-data";
+import { AlertTriangle, Clock, Filter, MapPin, Printer, Search, Truck } from "lucide-react";
+import { useOperationsData, VehicleFleetKind, ZoneId, TripStatus, PlannedTrip } from "../../lib/operations-data";
 import { TripAssignmentModal } from "./trip-assignment-modal";
+import { TripImportModal } from "./trip-import-modal";
 import { useTheme } from "next-themes";
-import { useSyncAlerts } from "../../lib/sync-store";
+import { filterAlertsByFleetDocumentationPolicy, useSyncAlerts } from "../../lib/sync-store";
+import { toast } from "sonner";
 
 function getStatusVariant(status: TripStatus) {
-  if (status === "Pendiente de aceptación") return "secondary";
+  if (status === "Pendiente" || status === "Sin chofer") return "secondary";
   if (status === "Cancelado") return "destructive";
   if (status === "Entregado") return "success";
-  if (status === "En Ruta") return "default";
-  if (status === "Cargando") return "warning";
+  if (status === "En ruta") return "default";
+  if (status === "En planta" || status === "Reprogramado" || status === "Asignado" || status === "Aceptado") return "warning";
   return "outline";
 }
 
@@ -95,11 +98,13 @@ function UnifiedRouteMap({
   selectedZone,
   zones,
   isDarkTheme,
+  getFleetKind,
 }: {
   visibleTrips: PlannedTrip[];
   selectedZone: ZoneId | null;
   zones: { id: ZoneId; name: string; colorClass: string; mapCenter: LatLngExpression; zoom: number; radiusKm: number }[];
   isDarkTheme: boolean;
+  getFleetKind: (plate: string) => VehicleFleetKind | undefined;
 }) {
   const selectedZoneConfig = selectedZone ? zones.find((zone) => zone.id === selectedZone) : null;
   const center = selectedZoneConfig ? selectedZoneConfig.mapCenter : ([-34.4, -61.5] as LatLngExpression);
@@ -179,6 +184,7 @@ function UnifiedRouteMap({
           const position = getPositionByProgress(mapPath, trip.progress);
           const tripZone = zones.find((zone) => zone.id === trip.zoneId);
           const tripColor = zoneColorToHex(tripZone?.colorClass ?? "bg-blue-500");
+          const fleet = getFleetKind(trip.vehiclePlate);
           return (
             <div key={trip.id}>
               <Polyline positions={mapPath} pathOptions={{ color: tripColor, weight: 4, opacity: 0.9 }} />
@@ -189,7 +195,12 @@ function UnifiedRouteMap({
                     <div>{trip.origin} {"->"} {trip.destination}</div>
                     <div>Zona: {tripZone?.name ?? trip.zoneId}</div>
                     <div>Chofer: {trip.driver}</div>
-                    <div>Vehículo: {trip.vehiclePlate}</div>
+                    <div>
+                      Vehículo: {trip.vehiclePlate}
+                      {fleet ? (
+                        <span className="text-muted-foreground"> ({fleet === "Propio" ? "Propio" : "Fletero"})</span>
+                      ) : null}
+                    </div>
                     <div>Estado: {trip.status}</div>
                   </div>
                 </Popup>
@@ -202,10 +213,14 @@ function UnifiedRouteMap({
   );
 }
 
+function normalizePlateValue(plate: string) {
+  return plate.trim().toUpperCase();
+}
+
 export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () => void }) {
   const { resolvedTheme } = useTheme();
-  const { zones, trips } = useOperationsData();
-  const syncedAlerts = useSyncAlerts(
+  const { zones, trips, vehicles } = useOperationsData();
+  const syncedAlertsRaw = useSyncAlerts(
     realtimeAlerts.map((alert) => ({
       id: String(alert.id),
       time: alert.time,
@@ -213,12 +228,33 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
       severity: alert.severity === "Alta" ? "Alta" : "Media",
       source: "web" as const,
       status: "Activa" as const,
+      alertKind: alert.alertKind,
+      vehiclePlate: alert.vehiclePlate,
+      tripId: alert.tripId,
     })),
+  );
+  const syncedAlerts = useMemo(
+    () => filterAlertsByFleetDocumentationPolicy(syncedAlertsRaw, vehicles),
+    [syncedAlertsRaw, vehicles],
   );
   const [selectedZone, setSelectedZone] = useState<ZoneId | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<TripStatus | "all">("all");
+  const [selectedFleet, setSelectedFleet] = useState<"all" | VehicleFleetKind>("all");
   const [search, setSearch] = useState("");
+  const [printOpen, setPrintOpen] = useState(false);
+  const [simulatingDownload, setSimulatingDownload] = useState(false);
   const isDarkTheme = resolvedTheme === "dark";
+
+  const fleetByPlate = useMemo(() => {
+    const map = new Map<string, VehicleFleetKind>();
+    vehicles.forEach((vehicle) => map.set(normalizePlateValue(vehicle.plate), vehicle.fleetKind));
+    return map;
+  }, [vehicles]);
+
+  const getFleetKind = useMemo(
+    () => (plate: string) => fleetByPlate.get(normalizePlateValue(plate)),
+    [fleetByPlate],
+  );
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -229,39 +265,102 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
     return () => window.removeEventListener("tf-select-zone", handler);
   }, []);
 
-  const visibleTrips = useMemo(() => {
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ tripId?: string; zoneId?: ZoneId }>).detail;
+      if (!detail?.tripId) return;
+      setSearch(detail.tripId);
+      if (detail.zoneId) setSelectedZone(detail.zoneId);
+    };
+    window.addEventListener("tf-focus-trip", handler);
+    return () => window.removeEventListener("tf-focus-trip", handler);
+  }, []);
+
+  /** Viajes que cumplen estado + flota + búsqueda (sin filtro de zona). Sirve para badges de zona y consistencia con el listado. */
+  const tripsMatchingGlobalFilters = useMemo(() => {
     return trips.filter((trip) => {
-      const zoneMatch = selectedZone ? trip.zoneId === selectedZone : true;
       const statusMatch = selectedStatus === "all" ? true : trip.status === selectedStatus;
+      const fleetKind = getFleetKind(trip.vehiclePlate);
+      const fleetMatch = selectedFleet === "all" ? true : fleetKind === selectedFleet;
       const query = search.trim().toLowerCase();
       const searchMatch =
         !query ||
         trip.id.toLowerCase().includes(query) ||
         trip.driver.toLowerCase().includes(query) ||
         trip.vehiclePlate.toLowerCase().includes(query) ||
+        trip.clientCompany.toLowerCase().includes(query) ||
         `${trip.origin} ${trip.destination}`.toLowerCase().includes(query);
-      return zoneMatch && statusMatch && searchMatch;
+      return statusMatch && fleetMatch && searchMatch;
     });
-  }, [trips, selectedZone, selectedStatus, search]);
+  }, [trips, selectedStatus, selectedFleet, search, getFleetKind]);
+
+  const visibleTrips = useMemo(() => {
+    return tripsMatchingGlobalFilters.filter((trip) => (selectedZone ? trip.zoneId === selectedZone : true));
+  }, [tripsMatchingGlobalFilters, selectedZone]);
 
   const zoneStats = useMemo(
     () =>
       zones.map((zone) => {
-        const zoneTrips = trips.filter((trip) => trip.zoneId === zone.id);
+        const zoneTrips = tripsMatchingGlobalFilters.filter((trip) => trip.zoneId === zone.id);
         const zoneTripIds = new Set(zoneTrips.map((trip) => trip.id));
-        const zonePlates = new Set(zoneTrips.map((trip) => trip.vehiclePlate));
+        const zonePlates = new Set(zoneTrips.map((trip) => normalizePlateValue(trip.vehiclePlate)));
         return {
           ...zone,
           activeTrips: zoneTrips.filter((trip) => trip.status !== "Entregado").length,
           alerts: syncedAlerts.filter(
             (alert) =>
               (alert.tripId ? zoneTripIds.has(alert.tripId) : false) ||
-              (alert.vehiclePlate ? zonePlates.has(alert.vehiclePlate) : false),
+              (alert.vehiclePlate ? zonePlates.has(normalizePlateValue(alert.vehiclePlate)) : false),
           ).length,
         };
       }),
-    [syncedAlerts, trips],
+    [syncedAlerts, tripsMatchingGlobalFilters, zones],
   );
+
+  const dashboardAlerts = useMemo(() => {
+    const tripIds = new Set(visibleTrips.map((trip) => trip.id));
+    const plates = new Set(visibleTrips.map((trip) => normalizePlateValue(trip.vehiclePlate)));
+    return syncedAlerts.filter((alert) => {
+      if (alert.tripId && tripIds.has(alert.tripId)) return true;
+      if (alert.vehiclePlate && plates.has(normalizePlateValue(alert.vehiclePlate))) return true;
+      return false;
+    });
+  }, [syncedAlerts, visibleTrips]);
+
+  const printGroups = useMemo(() => {
+    const byZone = new Map<ZoneId, PlannedTrip[]>();
+    visibleTrips.forEach((trip) => {
+      const current = byZone.get(trip.zoneId) ?? [];
+      current.push(trip);
+      byZone.set(trip.zoneId, current);
+    });
+    return zones
+      .map((zone) => ({ zoneId: zone.id, zoneName: zone.name, items: byZone.get(zone.id) ?? [] }))
+      .filter((zone) => zone.items.length > 0);
+  }, [visibleTrips, zones]);
+
+  const printFilterLabel = useMemo(() => {
+    const labels: string[] = [];
+    if (selectedStatus !== "all") labels.push(`estado ${selectedStatus.toLowerCase()}`);
+    if (selectedFleet !== "all") labels.push(`flota ${selectedFleet.toLowerCase()}`);
+    if (selectedZone) {
+      const zoneName = zones.find((zone) => zone.id === selectedZone)?.name ?? selectedZone;
+      labels.push(`zona ${zoneName}`);
+    }
+    if (search.trim()) labels.push(`búsqueda "${search.trim()}"`);
+    return labels.length ? labels.join(" · ") : "sin filtros (todos los viajes visibles)";
+  }, [selectedStatus, selectedFleet, selectedZone, zones, search]);
+
+  async function simulatePdfDownload() {
+    if (simulatingDownload) return;
+    setSimulatingDownload(true);
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    setSimulatingDownload(false);
+    setPrintOpen(false);
+    toast.success("Descarga simulada completada", {
+      description: "Se simuló la descarga del PDF con los filtros del Centro de Operaciones.",
+    });
+  }
 
   return (
     <div className="space-y-6">
@@ -270,14 +369,33 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
           <h1>Monitor de Control</h1>
           <p className="text-sm text-muted-foreground">Visualización operativa en tiempo real con asignación rápida de viajes.</p>
         </div>
-        <TripAssignmentModal
-          buttonLabel="Asignar nuevo viaje"
-          buttonClassName="w-full lg:w-auto"
-          onTripCreated={(tripId, zoneId) => {
-            setSelectedZone(zoneId);
-            setSearch(tripId);
-          }}
-        />
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            onClick={() => setPrintOpen(true)}
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            Descargar PDF (simulado)
+          </Button>
+          <TripImportModal
+            buttonClassName="w-full sm:w-auto"
+            onTripsImported={({ tripIds, zoneIds }) => {
+              const firstTripId = tripIds[0];
+              const firstZone = zoneIds[0];
+              if (firstZone) setSelectedZone(firstZone);
+              if (firstTripId) setSearch(firstTripId);
+            }}
+          />
+          <TripAssignmentModal
+            buttonLabel="Asignar nuevo viaje"
+            buttonClassName="w-full sm:w-auto"
+            onTripCreated={(tripId, zoneId) => {
+              setSelectedZone(zoneId);
+              setSearch(tripId);
+            }}
+          />
+        </div>
       </div>
 
       <Card>
@@ -287,21 +405,31 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input className="pl-9" placeholder="Buscar viaje, chofer, patente, ruta..." value={search} onChange={(event) => setSearch(event.target.value)} />
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:w-[430px]">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:w-[min(100%,680px)] lg:shrink-0">
               <Select value={selectedStatus} onValueChange={(value: TripStatus | "all") => setSelectedStatus(value)}>
                 <SelectTrigger><Filter className="mr-2 h-4 w-4" /><SelectValue placeholder="Estado" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos los estados</SelectItem>
-                  <SelectItem value="Pendiente de aceptación">Pendiente de aceptación</SelectItem>
+                  <SelectItem value="Pendiente">Pendiente</SelectItem>
+                  <SelectItem value="Sin chofer">Sin chofer</SelectItem>
                   <SelectItem value="Asignado">Asignado</SelectItem>
-                  <SelectItem value="En Planta">En Planta</SelectItem>
-                  <SelectItem value="Cargando">Cargando</SelectItem>
-                  <SelectItem value="En Ruta">En Ruta</SelectItem>
+                  <SelectItem value="Aceptado">Aceptado</SelectItem>
+                  <SelectItem value="En planta">En planta</SelectItem>
+                  <SelectItem value="En ruta">En ruta</SelectItem>
                   <SelectItem value="Entregado">Entregado</SelectItem>
                   <SelectItem value="Cancelado">Cancelado</SelectItem>
+                  <SelectItem value="Reprogramado">Reprogramado</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="outline" onClick={() => { setSelectedStatus("all"); setSearch(""); setSelectedZone(null); }}>
+              <Select value={selectedFleet} onValueChange={(value: "all" | VehicleFleetKind) => setSelectedFleet(value)}>
+                <SelectTrigger><Truck className="mr-2 h-4 w-4" /><SelectValue placeholder="Flota" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toda la flota</SelectItem>
+                  <SelectItem value="Propio">Solo vehículos propios</SelectItem>
+                  <SelectItem value="Fletero">Solo fleteros</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" className="sm:col-span-2 lg:col-span-1" onClick={() => { setSelectedStatus("all"); setSelectedFleet("all"); setSearch(""); setSelectedZone(null); }}>
                 Limpiar filtros
               </Button>
             </div>
@@ -339,18 +467,45 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <UnifiedRouteMap visibleTrips={visibleTrips} selectedZone={selectedZone} zones={zones} isDarkTheme={isDarkTheme} />
+          <UnifiedRouteMap
+            visibleTrips={visibleTrips}
+            selectedZone={selectedZone}
+            zones={zones}
+            isDarkTheme={isDarkTheme}
+            getFleetKind={getFleetKind}
+          />
           <div className="space-y-2">
             {visibleTrips.length === 0 ? (
               <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Sin viajes visibles para los filtros actuales.</div>
             ) : (
               visibleTrips.map((trip) => {
                 const zone = zones.find((item) => item.id === trip.zoneId);
+                const fleet = getFleetKind(trip.vehiclePlate);
                 return (
                   <div key={trip.id} className="flex flex-col gap-2 rounded-lg border p-3 md:flex-row md:items-center md:justify-between">
                     <div className="space-y-1">
                       <p className="text-sm">{trip.id} · {trip.origin} {"->"} {trip.destination}</p>
-                      <p className="text-xs text-muted-foreground">{trip.driver} · {trip.vehiclePlate} · {trip.cargo}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {trip.clientCompany} · <span className="font-mono text-foreground">{trip.remitoNumber}</span>
+                      </p>
+                      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span>{trip.driver}</span>
+                        <span className="text-border">·</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="font-medium text-foreground">{trip.vehiclePlate}</span>
+                          {fleet ? (
+                            <Badge variant={fleet === "Propio" ? "default" : "secondary"} className="h-5 px-1.5 text-[10px] font-normal">
+                              {fleet === "Propio" ? "Propio" : "Fletero"}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal">
+                              Flota N/D
+                            </Badge>
+                          )}
+                        </span>
+                        <span className="text-border">·</span>
+                        <span>{trip.cargo}</span>
+                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className="gap-1">
@@ -379,7 +534,12 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {syncedAlerts.map((alert) => (
+            {dashboardAlerts.length === 0 ? (
+              <div className="col-span-full rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                No hay alertas asociadas a los viajes visibles con los filtros actuales.
+              </div>
+            ) : null}
+            {dashboardAlerts.map((alert) => (
               <div key={alert.id} className={`rounded-lg border-l-4 p-3 ${alert.status === "Resuelta" ? "border-emerald-500 bg-emerald-500/10 opacity-80" : alert.severity === "Alta" ? "border-red-500 bg-red-500/10" : "border-yellow-500 bg-yellow-500/10"}`}>
                 <div className="flex items-start gap-2">
                   <Clock className="mt-0.5 h-4 w-4 text-muted-foreground" />
@@ -399,6 +559,75 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={printOpen} onOpenChange={setPrintOpen}>
+        <DialogContent className="max-h-[95vh] max-w-[95vw] overflow-y-auto sm:max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Previsualización de Planilla Operativa</DialogTitle>
+            <DialogDescription>
+              Se usa exactamente el conjunto filtrado del Centro de Operaciones.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-center overflow-auto bg-muted/50 p-4">
+            <div className="w-[210mm] min-h-[297mm] bg-white p-6 text-black shadow-lg">
+              <div className="mb-4 border-b border-black pb-3">
+                <h2 className="text-xl font-bold">Transportes Fighera — Planilla Operativa</h2>
+                <p className="text-sm">Fecha: {new Date().toLocaleDateString("es-AR")}</p>
+                <p className="text-sm">Filtros aplicados: {printFilterLabel}</p>
+              </div>
+              <div className="space-y-4 text-xs">
+                {printGroups.length === 0 ? (
+                  <p>No hay viajes para los filtros seleccionados.</p>
+                ) : (
+                  printGroups.map((group) => (
+                    <section key={group.zoneId}>
+                      <div className="bg-black px-2 py-1 font-semibold uppercase text-white">Zona: {group.zoneName}</div>
+                      <table className="w-full border-collapse border border-black">
+                        <thead>
+                          <tr>
+                            <th className="border border-black px-1 py-1 text-left">ID</th>
+                            <th className="border border-black px-1 py-1 text-left">Fecha</th>
+                            <th className="border border-black px-1 py-1 text-left">Chofer</th>
+                            <th className="border border-black px-1 py-1 text-left">Empresa</th>
+                            <th className="border border-black px-1 py-1 text-left">Camión</th>
+                            <th className="border border-black px-1 py-1 text-left">Origen</th>
+                            <th className="border border-black px-1 py-1 text-left">Destino</th>
+                            <th className="border border-black px-1 py-1 text-left">Carga</th>
+                            <th className="border border-black px-1 py-1 text-left">Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.items.map((trip) => (
+                            <tr key={`print-dashboard-${trip.id}`}>
+                              <td className="border border-black px-1 py-1">{trip.id}</td>
+                              <td className="border border-black px-1 py-1">{new Date(trip.scheduledAt).toLocaleString("es-AR")}</td>
+                              <td className="border border-black px-1 py-1">{trip.driver}</td>
+                              <td className="border border-black px-1 py-1">{trip.clientCompany}</td>
+                              <td className="border border-black px-1 py-1">{trip.vehiclePlate}</td>
+                              <td className="border border-black px-1 py-1">{trip.origin}</td>
+                              <td className="border border-black px-1 py-1">{trip.destination}</td>
+                              <td className="border border-black px-1 py-1">{trip.cargo}</td>
+                              <td className="border border-black px-1 py-1">{trip.status}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </section>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPrintOpen(false)}>
+              Cerrar
+            </Button>
+            <Button type="button" onClick={simulatePdfDownload} disabled={simulatingDownload}>
+              {simulatingDownload ? "Descargando..." : "Descargar PDF (simulado)"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

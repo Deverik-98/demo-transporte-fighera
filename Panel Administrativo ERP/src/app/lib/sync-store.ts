@@ -3,13 +3,15 @@ import { LatLngExpression } from "leaflet";
 
 export type SyncZoneId = string;
 export type SyncTripStatus =
-  | "Pendiente de aceptación"
+  | "Pendiente"
+  | "Sin chofer"
   | "Asignado"
-  | "En Planta"
-  | "Cargando"
-  | "En Ruta"
+  | "Aceptado"
+  | "En planta"
+  | "En ruta"
   | "Entregado"
-  | "Cancelado";
+  | "Cancelado"
+  | "Reprogramado";
 
 export type SyncTrip = {
   id: string;
@@ -24,9 +26,14 @@ export type SyncTrip = {
   cargo: string;
   plan: string;
   scheduledAt: string;
+  clientCompany?: string;
+  remitoNumber?: string;
   timeline?: Array<{ timestamp: string; descripcion: string }>;
   evidencias?: Array<{ tipo: string; nombre: string; fecha: string }>;
 };
+
+/** vehicle_documentation = vencimientos de papeles del camión; solo aplica a flota propia (no fleteros). */
+export type SyncAlertKind = "vehicle_documentation" | "operational" | "driver_documentation";
 
 export type SyncAlert = {
   id: string;
@@ -37,11 +44,28 @@ export type SyncAlert = {
   status: "Activa" | "Resuelta";
   tripId?: string;
   vehiclePlate?: string;
+  /** Sin definir: se trata como operativo (retrocompatibilidad). */
+  alertKind?: SyncAlertKind;
   resolvedAt?: string;
 };
 
+/** Alertas de documentación vehicular: solo si la patente es flota propia. Resto de alertas sin cambios. */
+export function filterAlertsByFleetDocumentationPolicy<
+  V extends { plate: string; fleetKind: "Propio" | "Fletero" },
+>(alerts: SyncAlert[], vehicles: V[]): SyncAlert[] {
+  const propioPlates = new Set(
+    vehicles.filter((v) => v.fleetKind === "Propio").map((v) => v.plate.trim().toUpperCase()),
+  );
+  return alerts.filter((alert) => {
+    if (alert.alertKind !== "vehicle_documentation") return true;
+    const plate = alert.vehiclePlate?.trim().toUpperCase();
+    if (!plate) return false;
+    return propioPlates.has(plate);
+  });
+}
+
 export const TRIPS_KEY = "tf_sync_trips_v1";
-export const ALERTS_KEY = "tf_sync_alerts_v1";
+export const ALERTS_KEY = "tf_sync_alerts_v2";
 export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
 export const DOCUMENTS_KEY = "tf_sync_documents_v1";

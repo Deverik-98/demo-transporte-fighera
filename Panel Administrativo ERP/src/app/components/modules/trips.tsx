@@ -8,7 +8,7 @@ import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useOperationsData, PlannedTrip, TripStage, ZoneId } from "../../lib/operations-data";
-import { AlertTriangle, CheckCircle2, Navigation, Palette, PenSquare, Printer, Search, Trash2, Truck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FolderOpen, Navigation, Palette, PenSquare, Printer, Search, Trash2, Truck, XCircle } from "lucide-react";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { realtimeAlerts } from "../../lib/mock-data";
 import { useSyncAlerts } from "../../lib/sync-store";
@@ -47,9 +47,10 @@ function toDateOnly(value: Date) {
 
 type TripsProps = {
   onFocusTripInMap?: (tripId: string, zoneId: ZoneId) => void;
+  onOpenTripDocuments?: (tripId: string) => void;
 };
 
-export function Trips({ onFocusTripInMap }: TripsProps) {
+export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
   const { trips, zones, drivers, vehicles, updateTrip, updateTripStatus, cancelTrip, removeTrip } = useOperationsData();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<TripStage | "all">("all");
@@ -537,6 +538,15 @@ export function Trips({ onFocusTripInMap }: TripsProps) {
                                 size="sm"
                                 variant="outline"
                                 className="h-7 px-2 text-[10px]"
+                                onClick={() => onOpenTripDocuments?.(trip.id)}
+                              >
+                                <FolderOpen className="mr-1 h-3 w-3" />
+                                Docs
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-[10px]"
                                 onClick={() => openEditTrip(trip)}
                               >
                                 <PenSquare className="mr-1 h-3 w-3" />
@@ -634,6 +644,14 @@ export function Trips({ onFocusTripInMap }: TripsProps) {
                                 <div className="flex flex-wrap gap-1">
                                   <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => focusTripInMap(trip)}>
                                     <Navigation className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={() => onOpenTripDocuments?.(trip.id)}
+                                  >
+                                    <FolderOpen className="h-3 w-3" />
                                   </Button>
                                   <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => openEditTrip(trip)}>
                                     <PenSquare className="h-3 w-3" />

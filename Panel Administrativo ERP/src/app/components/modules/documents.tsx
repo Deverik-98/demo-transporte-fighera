@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -8,11 +8,16 @@ import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { useOperationsData, DocumentEntityType } from "../../lib/operations-data";
-import { FileText, Plus, Upload, Sparkles } from "lucide-react";
+import { useOperationsData, DocumentEntityType, TripDocumentType } from "../../lib/operations-data";
+import { FileText, Pencil, Plus, Trash2, Upload, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
-export function DocumentsModule() {
+type DocumentsModuleProps = {
+  focusTripId?: string | null;
+  onFocusTripConsumed?: () => void;
+};
+
+export function DocumentsModule({ focusTripId, onFocusTripConsumed }: DocumentsModuleProps) {
   const {
     users,
     vehicles,
@@ -25,6 +30,10 @@ export function DocumentsModule() {
     markInvoiceSigned,
     userDocumentTypesByRole,
     vehicleDocumentTypes,
+    tripDocumentTypes,
+    addTripDocument,
+    updateTripDocument,
+    removeTripDocument,
   } = useOperationsData();
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"vehicle" | "user" | "trip" | "payroll">("vehicle");
@@ -47,6 +56,15 @@ export function DocumentsModule() {
     fileSizeKb: 0,
   });
   const [isAutofillApplied, setIsAutofillApplied] = useState(false);
+  const [tripDocDialogOpen, setTripDocDialogOpen] = useState(false);
+  const [newTripDoc, setNewTripDoc] = useState({
+    tripId: "",
+    type: "Remito" as TripDocumentType,
+    name: "",
+    url: "",
+  });
+  const [tripFilterTripId, setTripFilterTripId] = useState<string>("all");
+  const [editingTripDoc, setEditingTripDoc] = useState<{ tripId: string; docId: string } | null>(null);
 
   const userOwners = users.filter((user) => user.role === "Chofer");
   const drivers = users.filter((user) => user.role === "Chofer" && user.status === "Activo");
@@ -63,26 +81,82 @@ export function DocumentsModule() {
   const userDocs = useMemo(() => documents.filter((doc) => doc.entityType === "user"), [documents]);
   const tripDocs = useMemo(
     () =>
-      trips
-        .filter((trip) => (trip.evidencias ?? []).some((ev) => ev.tipo.includes("remito")))
-        .map((trip) => ({
+      trips.flatMap((trip) =>
+        (trip.evidencias ?? []).map((doc) => ({
           tripId: trip.id,
+          docId: doc.id,
           driver: trip.driver,
           route: `${trip.origin} → ${trip.destination}`,
           status: trip.status,
-          remitos: (trip.evidencias ?? []).filter((ev) => ev.tipo.includes("remito")),
+          type: (doc.type ?? doc.tipo ?? "Otro") as TripDocumentType,
+          name: doc.name ?? doc.nombre ?? "documento",
+          date: doc.date ?? doc.fecha ?? "",
+          uploadedBy: doc.uploadedBy ?? (doc.source === "chofer" ? "chofer" : "admin"),
         })),
+      ),
     [trips],
   );
   const filteredInvoices = useMemo(
     () => invoices.filter((invoice) => (statusFilter === "all" ? true : invoice.status === statusFilter)),
     [invoices, statusFilter],
   );
+  const filteredTripDocs = useMemo(
+    () => (tripFilterTripId === "all" ? tripDocs : tripDocs.filter((row) => row.tripId === tripFilterTripId)),
+    [tripDocs, tripFilterTripId],
+  );
 
-  function handleTripDocumentAction(tripId: string) {
-    toast.message(`Gestionar documentos del viaje ${tripId}`, {
-      description: "Utiliza esta acción para continuar con la gestión documental del viaje en este módulo.",
+  useEffect(() => {
+    if (!focusTripId) return;
+    setActiveTab("trip");
+    setTripFilterTripId(focusTripId);
+    setNewTripDoc((prev) => ({ ...prev, tripId: focusTripId }));
+    onFocusTripConsumed?.();
+  }, [focusTripId, onFocusTripConsumed]);
+
+  function handleTripDocumentAction() {
+    if (!newTripDoc.tripId || !newTripDoc.name.trim()) {
+      toast.error("Seleccioná viaje y nombre de documento.");
+      return;
+    }
+    const ok = addTripDocument(newTripDoc.tripId, {
+      type: newTripDoc.type,
+      name: newTripDoc.name.trim(),
+      url: newTripDoc.url.trim() || undefined,
+      uploadedBy: "admin",
     });
+    if (!ok) return;
+    setTripDocDialogOpen(false);
+    setNewTripDoc({ tripId: "", type: "Remito", name: "", url: "" });
+  }
+
+  function openEditTripDocument(tripId: string, docId: string) {
+    const trip = trips.find((t) => t.id === tripId);
+    const doc = trip?.evidencias?.find((d) => d.id === docId);
+    if (!doc) return;
+    setEditingTripDoc({ tripId, docId });
+    setNewTripDoc({
+      tripId,
+      type: (doc.type ?? doc.tipo ?? "Otro") as TripDocumentType,
+      name: doc.name ?? doc.nombre ?? "",
+      url: doc.url ?? "",
+    });
+  }
+
+  function saveEditTripDocument() {
+    if (!editingTripDoc || !newTripDoc.name.trim()) return;
+    const ok = updateTripDocument(editingTripDoc.tripId, editingTripDoc.docId, {
+      type: newTripDoc.type,
+      name: newTripDoc.name.trim(),
+      url: newTripDoc.url.trim() || undefined,
+      uploadedBy: "admin",
+    });
+    if (!ok) return;
+    setEditingTripDoc(null);
+    setNewTripDoc({ tripId: "", type: "Remito", name: "", url: "" });
+  }
+
+  function deleteTripDocument(tripId: string, docId: string) {
+    removeTripDocument(tripId, docId);
   }
 
   function detectDocumentType(fileName: string, entityType: DocumentEntityType, role?: string) {
@@ -226,7 +300,12 @@ export function DocumentsModule() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1>Gestión de Documentos</h1>
-        {activeTab === "trip" ? null : activeTab === "payroll" ? (
+        {activeTab === "trip" ? (
+          <Button onClick={() => setTripDocDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Subir documento del viaje
+          </Button>
+        ) : activeTab === "payroll" ? (
           <Button onClick={() => setIsPayrollOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Cargar documento
@@ -344,6 +423,7 @@ export function DocumentsModule() {
               const tab = value as "vehicle" | "user" | "trip" | "payroll";
               setActiveTab(tab);
               setForm((prev) => ({ ...prev, entityType: tab === "user" ? "user" : "vehicle", entityId: "", documentType: "" }));
+              if (tab !== "trip") setTripFilterTripId("all");
             }}
             className="space-y-4"
           >
@@ -402,6 +482,78 @@ export function DocumentsModule() {
             ))}
 
             <TabsContent value="trip" className="mt-0">
+              <Dialog
+                open={tripDocDialogOpen}
+                onOpenChange={(open) => {
+                  setTripDocDialogOpen(open);
+                  if (!open) setEditingTripDoc(null);
+                }}
+              >
+                <DialogContent className="sm:max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Subir documento de viaje</DialogTitle>
+                  </DialogHeader>
+                  <div className="grid gap-3">
+                    <div className="space-y-1">
+                      <Label>Viaje</Label>
+                      <Select value={newTripDoc.tripId} onValueChange={(value) => setNewTripDoc((prev) => ({ ...prev, tripId: value }))}>
+                        <SelectTrigger><SelectValue placeholder="Seleccionar viaje" /></SelectTrigger>
+                        <SelectContent>
+                          {trips.map((trip) => (
+                            <SelectItem key={trip.id} value={trip.id}>{trip.id} · {trip.driver}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Tipo</Label>
+                      <Select value={newTripDoc.type} onValueChange={(value) => setNewTripDoc((prev) => ({ ...prev, type: value as TripDocumentType }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {tripDocumentTypes.map((type) => (
+                            <SelectItem key={type} value={type}>{type}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Nombre</Label>
+                      <Input value={newTripDoc.name} onChange={(e) => setNewTripDoc((prev) => ({ ...prev, name: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>URL simulada (opcional)</Label>
+                      <Input value={newTripDoc.url} onChange={(e) => setNewTripDoc((prev) => ({ ...prev, url: e.target.value }))} />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setTripDocDialogOpen(false)}>Cancelar</Button>
+                    <Button type="button" onClick={editingTripDoc ? saveEditTripDocument : handleTripDocumentAction}>
+                      {editingTripDoc ? "Guardar cambios" : "Subir documento"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Filtrar por viaje</Label>
+                <Select value={tripFilterTripId} onValueChange={(value) => setTripFilterTripId(value)}>
+                  <SelectTrigger className="w-full sm:w-[320px]">
+                    <SelectValue placeholder="Todos los viajes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los viajes</SelectItem>
+                    {trips.map((trip) => (
+                      <SelectItem key={`trip-filter-${trip.id}`} value={trip.id}>
+                        {trip.id} · {trip.driver}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {tripFilterTripId !== "all" ? (
+                  <Button size="sm" variant="outline" onClick={() => setTripFilterTripId("all")}>
+                    Limpiar filtro
+                  </Button>
+                ) : null}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -410,37 +562,51 @@ export function DocumentsModule() {
                       <th className="p-3 text-left">Ruta</th>
                       <th className="p-3 text-left">Chofer</th>
                       <th className="p-3 text-left">Estado</th>
-                      <th className="p-3 text-left">Remitos adjuntos</th>
+                      <th className="p-3 text-left">Tipo</th>
+                      <th className="p-3 text-left">Documento</th>
+                      <th className="p-3 text-left">Fecha</th>
+                      <th className="p-3 text-left">Origen</th>
                       <th className="p-3 text-left">Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {tripDocs.length === 0 ? (
+                    {filteredTripDocs.length === 0 ? (
                       <tr>
-                        <td className="p-3 text-sm text-muted-foreground" colSpan={6}>
-                          No hay viajes con remitos adjuntos.
+                        <td className="p-3 text-sm text-muted-foreground" colSpan={9}>
+                          No hay documentos para el filtro seleccionado.
                         </td>
                       </tr>
                     ) : (
-                      tripDocs.map((trip) => (
-                        <tr key={trip.tripId} className="border-b border-border">
-                          <td className="p-3">{trip.tripId}</td>
-                          <td className="p-3">{trip.route}</td>
-                          <td className="p-3">{trip.driver}</td>
-                          <td className="p-3"><Badge variant="outline">{trip.status}</Badge></td>
+                      filteredTripDocs.map((row) => (
+                        <tr key={`${row.tripId}-${row.docId}`} className="border-b border-border">
+                          <td className="p-3">{row.tripId}</td>
+                          <td className="p-3">{row.route}</td>
+                          <td className="p-3">{row.driver}</td>
+                          <td className="p-3"><Badge variant="outline">{row.status}</Badge></td>
+                          <td className="p-3"><Badge variant="secondary">{row.type}</Badge></td>
+                          <td className="p-3 text-sm">{row.name}</td>
+                          <td className="p-3 text-xs text-muted-foreground">{row.date}</td>
                           <td className="p-3">
-                            <div className="flex flex-wrap gap-1">
-                              {trip.remitos.map((remito, idx) => (
-                                <Badge key={`${trip.tripId}-${remito.nombre}-${idx}`} variant="secondary">
-                                  {remito.tipo}
-                                </Badge>
-                              ))}
-                            </div>
+                            <Badge variant={row.uploadedBy === "chofer" ? "default" : "outline"}>
+                              {row.uploadedBy === "chofer" ? "Chofer" : "Admin"}
+                            </Badge>
                           </td>
                           <td className="p-3">
-                            <Button size="sm" variant="outline" onClick={() => handleTripDocumentAction(trip.tripId)}>
-                              Gestionar
-                            </Button>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  openEditTripDocument(row.tripId, row.docId);
+                                  setTripDocDialogOpen(true);
+                                }}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => deleteTripDocument(row.tripId, row.docId)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))

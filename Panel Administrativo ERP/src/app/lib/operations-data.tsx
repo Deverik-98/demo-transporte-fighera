@@ -38,6 +38,21 @@ export type TripStage =
   | "Cancelado"
   | "Reprogramado";
 export type TripStatus = TripStage;
+export type TripDocumentType = "Remito" | "Ticket" | "Gasto" | "Otro";
+export type TripDocument = {
+  id: string;
+  tripId: string;
+  name: string;
+  type: TripDocumentType;
+  url: string;
+  date: string;
+  uploadedBy: string;
+  /** Compatibilidad retro con componentes existentes. */
+  tipo?: string;
+  nombre?: string;
+  fecha?: string;
+  source?: "admin" | "chofer";
+};
 export type ZoneConfig = {
   id: ZoneId;
   name: string;
@@ -95,6 +110,7 @@ export type RouteTemplate = {
 export type PlannedTrip = {
   id: string;
   zoneId: ZoneId;
+  driverId?: string;
   driver: string;
   vehiclePlate: string;
   origin: string;
@@ -112,7 +128,7 @@ export type PlannedTrip = {
   /** Número de remito (clientes principales) o código único generado por el sistema (otros). */
   remitoNumber: string;
   timeline?: Array<{ timestamp: string; descripcion: string }>;
-  evidencias?: Array<{ tipo: string; nombre: string; fecha: string }>;
+  evidencias?: TripDocument[];
 };
 
 export type InvoiceStatus = "Cargada" | "Firmada";
@@ -166,6 +182,13 @@ type TripUpdateInput = {
   clientCompany: string;
   remitoNumber?: string;
   status: TripStage;
+};
+
+type TripDocumentInput = {
+  type: TripDocumentType;
+  name: string;
+  url?: string;
+  uploadedBy?: string;
 };
 
 type UserInput = { name: string; email: string; role: UserRole; zoneId: ZoneId };
@@ -267,6 +290,7 @@ type OperationsDataContextValue = {
   auditLogs: AuditLog[];
   userDocumentTypesByRole: Record<UserRole, string[]>;
   vehicleDocumentTypes: string[];
+  tripDocumentTypes: TripDocumentType[];
   routeTemplates: RouteTemplate[];
   addRouteTemplate: (input: { zoneId: ZoneId; origin: string; destination: string; path: LatLngExpression[] }) => RouteTemplate | null;
   trips: PlannedTrip[];
@@ -274,6 +298,9 @@ type OperationsDataContextValue = {
   expirationRules: ExpirationRule[];
   addTrip: (input: TripInput) => PlannedTrip | null;
   updateTrip: (tripId: string, input: TripUpdateInput) => PlannedTrip | null;
+  addTripDocument: (tripId: string, input: TripDocumentInput) => PlannedTrip | null;
+  updateTripDocument: (tripId: string, documentId: string, input: Partial<TripDocumentInput>) => PlannedTrip | null;
+  removeTripDocument: (tripId: string, documentId: string) => PlannedTrip | null;
   updateTripStatus: (tripId: string, status: TripStatus) => void;
   cancelTrip: (tripId: string) => void;
   removeTrip: (tripId: string) => void;
@@ -360,7 +387,7 @@ function normalizeZonesData(zones: ZoneConfig[]) {
   const byId = new Map(
     zones.map((zone) => [normalizeZoneId(zone.id), zone] as const),
   );
-  return defaultZonesSeed.map((seed) => {
+  const normalizedSeedZones = defaultZonesSeed.map((seed) => {
     const incoming = byId.get(seed.id);
     const incomingArea = incoming ? (hasSurfaceGeometry(incoming.areaGeoJson) ? incoming.areaGeoJson : null) : null;
     return {
@@ -373,6 +400,19 @@ function normalizeZonesData(zones: ZoneConfig[]) {
       areaGeoJson: incomingArea ?? seed.areaGeoJson ?? null,
     };
   });
+  const seedIds = new Set(defaultZonesSeed.map((seed) => seed.id));
+  const customZones = zones
+    .map((zone) => ({ ...zone, id: normalizeZoneId(zone.id) }))
+    .filter((zone) => !seedIds.has(zone.id))
+    .map((zone) => ({
+      ...zone,
+      colorHex: zone.colorHex || colorHexByClass[zone.colorClass ?? ""] || "#3B82F6",
+      mapCenter: ensureValidMapCenter(zone.mapCenter, [-34.6037, -58.3816]),
+      zoom: ensureValidZoom(zone.zoom, 6),
+      radiusKm: ensureValidRadiusKm(zone.radiusKm, 60),
+      areaGeoJson: hasSurfaceGeometry(zone.areaGeoJson) ? zone.areaGeoJson : null,
+    }));
+  return [...normalizedSeedZones, ...customZones];
 }
 
 async function fetchZoneBoundary(query: string, countryCode = "ar") {
@@ -396,9 +436,48 @@ function normalizeUsersData(items: AppUser[]) {
   return items.map((item) => ({ ...item, zoneId: normalizeZoneId(item.zoneId) }));
 }
 
+function normalizeTripDocuments(tripId: string, raw: unknown): TripDocument[] {
+  if (!Array.isArray(raw)) return [];
+  const docs = raw.filter((d): d is Record<string, unknown> => d !== null && typeof d === "object");
+  return docs.map((doc, idx) => {
+    const id = typeof doc.id === "string" && doc.id ? doc.id : `TD-${tripId}-${idx}-${Math.random().toString(36).slice(2, 9)}`;
+    const typeRaw = String(doc.type ?? doc.tipo ?? "Otro");
+    const type: TripDocumentType =
+      typeRaw === "Remito" || typeRaw === "Ticket" || typeRaw === "Gasto" || typeRaw === "Otro"
+        ? typeRaw
+        : "Otro";
+    const name = String(doc.name ?? doc.nombre ?? "documento.pdf");
+    const date = String(doc.date ?? doc.fecha ?? new Date().toLocaleString("es-AR"));
+    const uploadedBy = String(doc.uploadedBy ?? (doc.source === "chofer" ? "chofer" : "admin"));
+    return {
+      id,
+      tripId,
+      name,
+      type,
+      url: String(doc.url ?? `local://${id}`),
+      date,
+      uploadedBy,
+      tipo: type,
+      nombre: name,
+      fecha: date,
+      source: uploadedBy === "chofer" ? "chofer" : "admin",
+    };
+  });
+}
+
+function newTripDocumentId(tripId: string) {
+  return `TD-${tripId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 function normalizeTripsData(items: PlannedTrip[]) {
   const UNASSIGNED_DRIVER_LABEL = "Sin asignar";
   const UNASSIGNED_VEHICLE_LABEL = "Sin asignar";
+  const driverIdByName: Record<string, string> = {
+    "juan pérez": "driver-juan",
+    "maría gonzález": "USR-05",
+    "carlos rodríguez": "USR-06",
+    "diego fernández": "USR-07",
+  };
   const normalizeTripStage = (raw: string | undefined): TripStage => {
     const status = (raw ?? "").trim().toLowerCase();
     if (status === "pendiente de aceptación" || status === "pendiente") return "Pendiente";
@@ -430,12 +509,18 @@ function normalizeTripsData(items: PlannedTrip[]) {
   };
   return items.map((item) => {
     const normalizedStatus = normalizeTripStage(item.status);
+    const evidencias = normalizeTripDocuments(item.id, item.evidencias);
     return {
       ...alignTripWithStage(item, normalizedStatus),
       zoneId: normalizeZoneId(item.zoneId),
+      driverId:
+        item.driverId ||
+        driverIdByName[(item.driver ?? "").trim().toLowerCase()] ||
+        undefined,
       status: normalizedStatus,
       clientCompany: item.clientCompany?.trim() || "Cliente general",
       remitoNumber: item.remitoNumber?.trim() || `REM-${item.id}`,
+      evidencias,
     };
   });
 }
@@ -449,12 +534,13 @@ const userDocumentTypesByRole: Record<UserRole, string[]> = {
 };
 
 const vehicleDocumentTypes = ["VTV", "Seguro del Vehículo", "Habilitación", "Póliza de Carga"];
+const tripDocumentTypes: TripDocumentType[] = ["Remito", "Ticket", "Gasto", "Otro"];
 
 const initialUsers: AppUser[] = [
   { id: "USR-01", name: "Admin Principal", email: "admin@transportefighera.com", role: "Administrador", status: "Activo", zoneId: "zona-bsas" },
   { id: "USR-02", name: "Operador Logística", email: "operador@transportefighera.com", role: "Operador", status: "Activo", zoneId: "zona-cordoba" },
   { id: "USR-03", name: "Supervisor Rutas", email: "supervisor@transportefighera.com", role: "Supervisor", status: "Activo", zoneId: "zona-santafe" },
-  { id: "USR-04", name: "Juan Pérez", email: "juan.perez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-bsas" },
+  { id: "driver-juan", name: "Juan Pérez", email: "juan.perez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-bsas" },
   { id: "USR-05", name: "María González", email: "maria.gonzalez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-cordoba" },
   { id: "USR-06", name: "Carlos Rodríguez", email: "carlos.rodriguez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-sanjuan" },
   { id: "USR-07", name: "Diego Fernández", email: "diego.fernandez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-tucuman" },
@@ -496,7 +582,7 @@ const initialDocuments: DocumentRecord[] = [
   {
     id: "DOC-01",
     entityType: "user",
-    entityId: "USR-04",
+    entityId: "driver-juan",
     documentType: "Licencia de Conducir",
     expiresAt: "2026-08-15",
     status: "Vigente",
@@ -509,7 +595,7 @@ const initialDocuments: DocumentRecord[] = [
   {
     id: "DOC-02",
     entityType: "user",
-    entityId: "USR-04",
+    entityId: "driver-juan",
     documentType: "Psicofísico",
     expiresAt: "2026-06-02",
     status: "Próximo a vencer",
@@ -556,7 +642,7 @@ const initialAuditLogs: AuditLog[] = [
 const initialInvoices: DriverInvoice[] = [
   {
     id: "FAC-01",
-    driverId: "USR-04",
+    driverId: "driver-juan",
     driverName: "Juan Pérez",
     period: "Abril 2026",
     amount: 1250000,
@@ -664,6 +750,7 @@ const initialTrips: PlannedTrip[] = [
   {
     id: "VJ-1001",
     zoneId: "zona-bsas",
+    driverId: "driver-juan",
     driver: "Juan Pérez",
     vehiclePlate: "AB123CD",
     origin: "Buenos Aires",
@@ -754,13 +841,14 @@ const initialTrips: PlannedTrip[] = [
   {
     id: "VJ-1006",
     zoneId: "zona-bsas",
+    driverId: "driver-juan",
     driver: "Juan Pérez",
     vehiclePlate: "VC227BB",
     origin: "Buenos Aires",
     destination: "Zárate",
     routePath: initialRouteTemplates[5].path,
-    progress: 18,
-    status: "En planta",
+    progress: 0,
+    status: "Asignado",
     cargo: "Rollos de acero - 20 toneladas",
     plan: "Ingreso a planta siderúrgica y despacho en ventana AM.",
     scheduledAt: "2026-05-01T11:00",
@@ -808,13 +896,14 @@ const initialTrips: PlannedTrip[] = [
   {
     id: "VJ-1009",
     zoneId: "zona-sanjuan",
+    driverId: "driver-juan",
     driver: "Juan Pérez",
     vehiclePlate: "MN789GH",
     origin: "Mendoza",
     destination: "San Juan",
     routePath: initialRouteTemplates[2].path,
     progress: 0,
-    status: "Reprogramado",
+    status: "Asignado",
     cargo: "Insumos vitivinícolas - 11 toneladas",
     plan: "Ruta en corredor andino con control documental.",
     scheduledAt: "2026-05-02T07:45",
@@ -1134,6 +1223,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
       auditLogs,
       userDocumentTypesByRole,
       vehicleDocumentTypes,
+      tripDocumentTypes,
       routeTemplates: routeTemplatesState,
       addRouteTemplate: (input) => {
         const origin = input.origin.trim();
@@ -1198,13 +1288,14 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         const newTrip: PlannedTrip = {
           id: `VJ-${sequence}`,
           zoneId: input.zoneId,
+          driverId: driver.id,
           driver: driver.name,
           vehiclePlate: vehicle.plate,
           origin: route.origin,
           destination: route.destination,
           routePath: route.path,
           progress: 0,
-          status: "Pendiente",
+          status: "Asignado",
           cargo: input.cargo.trim(),
           plan: input.plan.trim(),
           scheduledAt: input.scheduledAt || new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
@@ -1217,22 +1308,6 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         toast.message(`Viaje ${newTrip.id} creado`, {
           description: "Esperando aceptación del chofer...",
         });
-        window.setTimeout(() => {
-          updateTrips((prev) =>
-            prev.map((trip) =>
-              trip.id === newTrip.id
-                ? {
-                    ...trip,
-                    status: "Aceptado",
-                    progress: 10,
-                  }
-                : trip,
-            ),
-          );
-          toast.success(`Chofer aceptó ${newTrip.id}`, {
-            description: `${newTrip.driver} confirmó el viaje. Ya se muestra en el mapa.`,
-          });
-        }, 6000);
         return newTrip;
       },
       updateTrip: (tripId, input) => {
@@ -1265,10 +1340,12 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           input.status === "Sin chofer" ? "Sin asignar" : trimmedDriver || "Chofer N/D";
         const normalizedVehicle =
           input.status === "Sin chofer" ? "Sin asignar" : trimmedPlate || "Patente N/D";
+        const resolvedDriverId = users.find((u) => u.role === "Chofer" && u.name === normalizedDriver)?.id;
 
         const updatedTrip: PlannedTrip = {
           ...target,
           zoneId: input.zoneId,
+          driverId: resolvedDriverId ?? target.driverId,
           driver: normalizedDriver,
           vehiclePlate: normalizedVehicle,
           origin,
@@ -1289,6 +1366,66 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
 
         updateTrips((prev) => prev.map((trip) => (trip.id === tripId ? updatedTrip : trip)));
         toast.success(`Viaje ${tripId} actualizado`);
+        return updatedTrip;
+      },
+      addTripDocument: (tripId, input) => {
+        const trip = trips.find((item) => item.id === tripId);
+        if (!trip || !input.name.trim()) return null;
+        const nextDoc: TripDocument = {
+          id: newTripDocumentId(tripId),
+          tripId,
+          name: input.name.trim(),
+          type: input.type,
+          url: input.url?.trim() || `local://${tripId}/${Date.now()}`,
+          date: new Date().toLocaleString("es-AR"),
+          uploadedBy: input.uploadedBy?.trim() || "admin",
+          tipo: input.type,
+          nombre: input.name.trim(),
+          fecha: new Date().toLocaleString("es-AR"),
+          source: input.uploadedBy === "chofer" ? "chofer" : "admin",
+        };
+        const updatedTrip: PlannedTrip = {
+          ...trip,
+          evidencias: [...(trip.evidencias ?? []), nextDoc],
+        };
+        updateTrips((prev) => prev.map((item) => (item.id === tripId ? updatedTrip : item)));
+        toast.success("Documento de viaje subido con éxito");
+        return updatedTrip;
+      },
+      updateTripDocument: (tripId, documentId, input) => {
+        const trip = trips.find((item) => item.id === tripId);
+        if (!trip) return null;
+        const docs = trip.evidencias ?? [];
+        const idx = docs.findIndex((doc) => doc.id === documentId);
+        if (idx < 0) return null;
+        const current = docs[idx];
+        const next: TripDocument = {
+          ...current,
+          name: input.name?.trim() || current.name,
+          type: input.type || current.type,
+          url: input.url?.trim() || current.url,
+          uploadedBy: input.uploadedBy?.trim() || current.uploadedBy,
+          date: new Date().toLocaleString("es-AR"),
+          tipo: input.type || current.type,
+          nombre: input.name?.trim() || current.name,
+          fecha: new Date().toLocaleString("es-AR"),
+          source: (input.uploadedBy?.trim() || current.uploadedBy) === "chofer" ? "chofer" : "admin",
+        };
+        const nextDocs = [...docs];
+        nextDocs[idx] = next;
+        const updatedTrip: PlannedTrip = { ...trip, evidencias: nextDocs };
+        updateTrips((prev) => prev.map((item) => (item.id === tripId ? updatedTrip : item)));
+        toast.success("Documento de viaje actualizado");
+        return updatedTrip;
+      },
+      removeTripDocument: (tripId, documentId) => {
+        const trip = trips.find((item) => item.id === tripId);
+        if (!trip) return null;
+        const nextDocs = (trip.evidencias ?? []).filter((doc) => doc.id !== documentId);
+        if (nextDocs.length === (trip.evidencias ?? []).length) return null;
+        const updatedTrip: PlannedTrip = { ...trip, evidencias: nextDocs };
+        updateTrips((prev) => prev.map((item) => (item.id === tripId ? updatedTrip : item)));
+        toast.success("Documento eliminado del viaje");
         return updatedTrip;
       },
       updateTripStatus: (tripId, status) => {
@@ -1398,7 +1535,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         const days = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         const status: DocumentRecord["status"] = days < 0 ? "Vencido" : days <= 30 ? "Próximo a vencer" : "Vigente";
         const doc: DocumentRecord = {
-          id: buildId("DOC", documents.length + 1),
+          id: `DOC-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
           entityType: input.entityType,
           entityId: input.entityId,
           documentType: input.documentType,

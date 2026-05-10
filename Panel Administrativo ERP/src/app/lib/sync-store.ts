@@ -29,7 +29,19 @@ export type SyncTrip = {
   clientCompany?: string;
   remitoNumber?: string;
   timeline?: Array<{ timestamp: string; descripcion: string }>;
-  evidencias?: Array<{ tipo: string; nombre: string; fecha: string }>;
+  evidencias?: Array<{
+    id: string;
+    tripId?: string;
+    name?: string;
+    type?: "Remito" | "Ticket" | "Gasto" | "Otro";
+    url?: string;
+    date?: string;
+    uploadedBy?: string;
+    tipo?: string;
+    nombre?: string;
+    fecha?: string;
+    source?: "admin" | "chofer";
+  }>;
 };
 
 /** vehicle_documentation = vencimientos de papeles del camión; solo aplica a flota propia (no fleteros). */
@@ -87,8 +99,21 @@ function readJson<T>(key: string, fallback: T): T {
 
 function writeJson<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, JSON.stringify(value));
+  const serialized = JSON.stringify(value);
+  window.localStorage.setItem(key, serialized);
   window.dispatchEvent(new CustomEvent(INTERNAL_EVENT, { detail: { key } }));
+  try {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key,
+        newValue: serialized,
+        storageArea: window.localStorage,
+        url: window.location.href,
+      }),
+    );
+  } catch {
+    // Fallback: listeners internos ya cubren sincronía en la misma pestaña.
+  }
 }
 
 export function initSyncStore(seedTrips: SyncTrip[], seedAlerts: SyncAlert[]) {

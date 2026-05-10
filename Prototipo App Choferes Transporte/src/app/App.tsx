@@ -42,6 +42,7 @@ type TripStatus = 'asignado' | 'aceptado' | 'en-planta' | 'en-ruta' | 'completad
 type Screen = 'ruta' | 'historial' | 'rrhh' | 'perfil';
 type RouteEventType = 'incidente' | 'retraso' | 'desvio' | 'parada';
 type ExpenseCategory = 'peajes' | 'combustible' | 'gomeria' | 'fitosanitario' | 'otros';
+type TripDocType = 'Remito' | 'Ticket' | 'Gasto' | 'Otro';
 
 const expenseCategoryLabels: Record<ExpenseCategory, string> = {
   peajes: 'Peajes',
@@ -67,8 +68,9 @@ type RoutePushReminder = {
 
 interface Trip {
   id: string;
+  driverId?: string;
   driver: string;
-  zoneId: 'zona-argentina' | 'zona-uruguay';
+  zoneId: string;
   stage: TripStage;
   vehiclePlate: string;
   fechaProgramada: string;
@@ -83,7 +85,19 @@ interface Trip {
   alertas: Array<{ tipo: RouteEventType; descripcion: string; timestamp: string }>;
   routePath: LatLngExpression[];
   progress: number;
-  evidencias: Array<{ tipo: string; nombre: string; fecha: string }>;
+  evidencias: Array<{
+    id?: string;
+    tripId?: string;
+    name?: string;
+    type?: TripDocType;
+    url?: string;
+    date?: string;
+    uploadedBy?: string;
+    tipo: string;
+    nombre: string;
+    fecha: string;
+    source?: 'admin' | 'chofer';
+  }>;
 }
 
 interface Document {
@@ -115,7 +129,7 @@ type SyncedUserRecord = {
   email: string;
   role: string;
   status: string;
-  zoneId?: 'zona-argentina' | 'zona-uruguay';
+  zoneId?: string;
 };
 
 function getPositionByProgress(path: LatLngExpression[], progress: number): LatLngExpression {
@@ -139,10 +153,54 @@ function tripIcon(plate: string) {
   });
 }
 
+function normalizeDriverName(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+function normalizeIncomingSyncStatus(raw: string | undefined): SyncTrip['status'] {
+  if (!raw || typeof raw !== 'string') return 'Asignado';
+  const legacy: Record<string, SyncTrip['status']> = {
+    'Pendiente de aceptación': 'Asignado',
+    'En Ruta': 'En ruta',
+    'En Planta': 'En planta',
+    Cargando: 'En planta',
+  };
+  if (legacy[raw]) return legacy[raw];
+  const allowed: SyncTrip['status'][] = ['Pendiente', 'Sin chofer', 'Asignado', 'Aceptado', 'En planta', 'En ruta', 'Entregado', 'Cancelado', 'Reprogramado'];
+  return (allowed as string[]).includes(raw) ? (raw as SyncTrip['status']) : 'Asignado';
+}
+
+function normalizeTripDocs(tripId: string, raw: unknown) {
+  if (!Array.isArray(raw)) return [] as Trip['evidencias'];
+  const docs = raw.filter((d): d is Record<string, unknown> => d !== null && typeof d === 'object');
+  return docs.map((doc, idx) => {
+    const id = typeof doc.id === 'string' && doc.id ? doc.id : `TD-${tripId}-${idx}-${Math.random().toString(36).slice(2, 9)}`;
+    const typeRaw = String(doc.type ?? doc.tipo ?? 'Otro');
+    const type: TripDocType = typeRaw === 'Remito' || typeRaw === 'Ticket' || typeRaw === 'Gasto' || typeRaw === 'Otro' ? typeRaw : 'Otro';
+    const name = String(doc.name ?? doc.nombre ?? 'documento.pdf');
+    const date = String(doc.date ?? doc.fecha ?? new Date().toLocaleString('es-AR'));
+    const uploadedBy = String(doc.uploadedBy ?? (doc.source === 'chofer' ? 'chofer' : 'admin'));
+    return {
+      id,
+      tripId,
+      name,
+      type,
+      url: String(doc.url ?? `local://${id}`),
+      date,
+      uploadedBy,
+      tipo: type,
+      nombre: name,
+      fecha: date,
+      source: uploadedBy === 'chofer' ? 'chofer' : 'admin',
+    };
+  });
+}
+
 function mapTripToSync(trip: Trip): SyncTrip {
   return {
     id: trip.id,
     zoneId: trip.zoneId,
+    driverId: trip.driverId,
     driver: trip.driver,
     vehiclePlate: trip.vehiclePlate,
     origin: trip.origen,
@@ -151,30 +209,32 @@ function mapTripToSync(trip: Trip): SyncTrip {
     progress: trip.progress,
     status:
       trip.estado === 'asignado'
-        ? 'Pendiente de aceptación'
+        ? 'Asignado'
         : trip.estado === 'aceptado'
-          ? 'Asignado'
+          ? 'Aceptado'
           : trip.estado === 'en-ruta'
-            ? 'En Ruta'
+            ? 'En ruta'
             : trip.estado === 'completado'
               ? 'Entregado'
               : trip.estado === 'cancelado'
                 ? 'Cancelado'
-                : 'En Planta',
+                : 'En planta',
     cargo: trip.carga,
     plan: trip.plan,
     scheduledAt: trip.fechaProgramada,
     timeline: trip.timeline,
-    evidencias: trip.evidencias
+    evidencias: normalizeTripDocs(trip.id, trip.evidencias)
   };
 }
 
 function mapSyncToMobileTrip(syncTrip: SyncTrip): Trip {
+  const normalizedStatus = normalizeIncomingSyncStatus(syncTrip.status as unknown as string);
   return {
     id: syncTrip.id,
+    driverId: syncTrip.driverId,
     driver: syncTrip.driver,
     zoneId: syncTrip.zoneId,
-    stage: syncTrip.status === 'En Ruta' ? 'en-ruta' : syncTrip.status === 'Entregado' ? 'llegada' : 'aceptado',
+    stage: normalizedStatus === 'En ruta' ? 'en-ruta' : normalizedStatus === 'Entregado' ? 'llegada' : 'aceptado',
     vehiclePlate: syncTrip.vehiclePlate,
     fechaProgramada: syncTrip.scheduledAt,
     origen: syncTrip.origin,
@@ -184,22 +244,22 @@ function mapSyncToMobileTrip(syncTrip: SyncTrip): Trip {
     eta: "3h 30m",
     plan: syncTrip.plan,
     estado:
-      syncTrip.status === 'Pendiente de aceptación'
+      normalizedStatus === 'Asignado' || normalizedStatus === 'Pendiente' || normalizedStatus === 'Sin chofer' || normalizedStatus === 'Reprogramado'
         ? 'asignado'
-        : syncTrip.status === 'Asignado'
+        : normalizedStatus === 'Aceptado'
           ? 'aceptado'
-          : syncTrip.status === 'En Ruta'
+          : normalizedStatus === 'En ruta'
             ? 'en-ruta'
-            : syncTrip.status === 'Entregado'
+            : normalizedStatus === 'Entregado'
               ? 'completado'
-              : syncTrip.status === 'Cancelado'
+              : normalizedStatus === 'Cancelado'
                 ? 'cancelado'
                 : 'en-planta',
-    timeline: [{ timestamp: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }), descripcion: 'Viaje sincronizado desde panel.' }],
+    timeline: syncTrip.timeline && syncTrip.timeline.length ? syncTrip.timeline : [{ timestamp: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }), descripcion: 'Viaje sincronizado desde panel.' }],
     alertas: [],
     routePath: syncTrip.routePath,
     progress: syncTrip.progress,
-    evidencias: syncTrip.evidencias ?? []
+    evidencias: normalizeTripDocs(syncTrip.id, syncTrip.evidencias)
   };
 }
 
@@ -276,6 +336,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginEmail, setLoginEmail] = useState('juan.perez@transportefighera.com');
   const [loginPassword, setLoginPassword] = useState('123456');
+  const [currentDriverId, setCurrentDriverId] = useState('driver-juan');
   const [currentDriverName, setCurrentDriverName] = useState('Juan Pérez');
   const previousTripIdsRef = useRef<string[]>([]);
   const [activeScreen, setActiveScreen] = useState<Screen>('ruta');
@@ -283,7 +344,9 @@ export default function App() {
   const [showMapScreen, setShowMapScreen] = useState(false);
   const [expandedTripIds, setExpandedTripIds] = useState<string[]>([]);
   const [activeTripId, setActiveTripId] = useState<string | null>(null);
-  const [trips, setTrips] = useState<Trip[]>(initialMobileTrips);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [hasHydratedTripsFromSync, setHasHydratedTripsFromSync] = useState(false);
+  const [canWriteTripsToSync, setCanWriteTripsToSync] = useState(false);
   const [showIncidentModal, setShowIncidentModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
@@ -297,7 +360,11 @@ export default function App() {
   const [remitoRawKb, setRemitoRawKb] = useState<number | null>(null);
   const [remitoFinalKb, setRemitoFinalKb] = useState<number | null>(null);
   const [showDocumentUpload, setShowDocumentUpload] = useState<string | null>(null);
-  const [selectedEvidenceUpdate, setSelectedEvidenceUpdate] = useState<{ tripId: string; evidenceIndex: number } | null>(null);
+  const [tripDocModalTripId, setTripDocModalTripId] = useState<string | null>(null);
+  const [tripDocForm, setTripDocForm] = useState<{ type: TripDocType; name: string; url: string }>({ type: 'Remito', name: '', url: '' });
+  const [tripDocUploading, setTripDocUploading] = useState(false);
+  const [tripDocMockAttachment, setTripDocMockAttachment] = useState<string | null>(null);
+  const [selectedEvidenceUpdate, setSelectedEvidenceUpdate] = useState<{ tripId: string; evidenceId: string } | null>(null);
   const [eventDescription, setEventDescription] = useState('');
   const [selectedRouteEventType, setSelectedRouteEventType] = useState<RouteEventType | null>(null);
   const [expandedHistoryIds, setExpandedHistoryIds] = useState<string[]>([]);
@@ -353,9 +420,9 @@ export default function App() {
     () => {
       const syncedDrivers = syncedUserRecords
         .filter((user) => user.role === 'Chofer' && user.status === 'Activo')
-        .map((user) => ({ email: user.email.toLowerCase(), driverName: user.name }));
+        .map((user) => ({ id: user.id, email: user.email.toLowerCase(), driverName: user.name }));
       if (syncedDrivers.length) return syncedDrivers;
-      return [{ email: 'juan.perez@transportefighera.com', driverName: 'Juan Pérez' }];
+      return [{ id: 'driver-juan', email: 'juan.perez@transportefighera.com', driverName: 'Juan Pérez' }];
     },
     [syncedUserRecords]
   );
@@ -396,17 +463,27 @@ export default function App() {
     return docs.length ? docs : fallbackVehicleDocuments;
   }, [fallbackVehicleDocuments, syncedDocumentRecords, syncedVehicleRecords]);
 
+  const isTripForCurrentDriver = (trip: Trip) => {
+    const matchById = Boolean(trip.driverId) && trip.driverId === currentDriverId;
+    const matchByName = normalizeDriverName(trip.driver) === normalizeDriverName(currentDriverName);
+    return matchById || matchByName;
+  };
+
   const tripHistory = useMemo(
     () =>
       trips
-        .filter((trip) => trip.estado === 'completado' || trip.estado === 'cancelado')
+        .filter(
+          (trip) =>
+            isTripForCurrentDriver(trip) &&
+            (trip.estado === 'completado' || trip.estado === 'cancelado')
+        )
         .map((trip) => ({
           id: trip.id,
           fecha: trip.fechaProgramada,
           ruta: `${trip.origen} → ${trip.destino}`,
           estado: trip.estado === 'completado' ? 'Completado' : 'Cancelado'
         })),
-    [trips]
+    [currentDriverId, currentDriverName, trips]
   );
 
   useEffect(() => {
@@ -418,23 +495,31 @@ export default function App() {
     );
     if (synced.length) {
       setTrips(synced.map(mapSyncToMobileTrip));
+      setCanWriteTripsToSync(true);
+    } else {
+      setTrips([]);
+      setCanWriteTripsToSync(false);
     }
+    setHasHydratedTripsFromSync(true);
   }, []);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== 'tf_sync_trips_v1') return;
+      if (event.key && event.key !== 'tf_sync_trips_v1') return;
       const synced = getSyncTrips();
-      if (synced.length) setTrips(synced.map(mapSyncToMobileTrip));
+      if (synced.length) {
+        setTrips(synced.map(mapSyncToMobileTrip));
+        setCanWriteTripsToSync(true);
+      }
     };
     const onStorageCollections = (event: StorageEvent) => {
-      if (event.key === 'tf_sync_vehicles_v1') {
+      if (!event.key || event.key === 'tf_sync_vehicles_v1') {
         setSyncedVehicleRecords(getSyncVehicles<{ id: string; plate: string }>());
       }
-      if (event.key === 'tf_sync_users_v1') {
+      if (!event.key || event.key === 'tf_sync_users_v1') {
         setSyncedUserRecords(getSyncUsers<SyncedUserRecord>());
       }
-      if (event.key === 'tf_sync_documents_v1') {
+      if (!event.key || event.key === 'tf_sync_documents_v1') {
         setSyncedDocumentRecords(
           getSyncDocuments<{ entityType: string; entityId: string; documentType: string; fileName: string; expiresAt: string; status?: string }>()
         );
@@ -453,6 +538,7 @@ export default function App() {
     const profile = driverProfiles.find((item) => item.email === currentLogin);
     if (profile && profile.driverName !== currentDriverName) {
       setCurrentDriverName(profile.driverName);
+      setCurrentDriverId(profile.id);
     }
   }, [currentDriverName, driverProfiles, loginEmail]);
 
@@ -542,7 +628,7 @@ export default function App() {
     () =>
       trips.filter(
         (trip) =>
-          trip.driver === currentDriverName &&
+          isTripForCurrentDriver(trip) &&
           trip.estado !== 'completado' &&
           trip.estado !== 'cancelado'
       )
@@ -552,13 +638,12 @@ export default function App() {
         if (aInProgress !== bInProgress) return bInProgress - aInProgress;
         return parseTripScheduleToMs(a.fechaProgramada) - parseTripScheduleToMs(b.fechaProgramada);
       }),
-    [currentDriverName, trips]
+    [currentDriverId, currentDriverName, trips]
   );
 
-  const hasTripInProgress = useMemo(
-    () => pendingTrips.some((trip) => trip.estado === 'en-ruta'),
-    [pendingTrips]
-  );
+  const hasTripInProgress = useMemo(() => pendingTrips.some((trip) => trip.estado === 'en-ruta'), [pendingTrips]);
+  const operationalStates: TripStatus[] = ['aceptado', 'en-planta', 'en-ruta'];
+  const hasOperationalTrip = useMemo(() => pendingTrips.some((trip) => operationalStates.includes(trip.estado)), [pendingTrips]);
 
   useEffect(() => {
     if (!activeTripId && pendingTrips.length > 0) {
@@ -645,8 +730,12 @@ export default function App() {
   }, [activeTripId, trips]);
 
   useEffect(() => {
-    setSyncTrips(trips.map(mapTripToSync));
-  }, [trips]);
+    if (!hasHydratedTripsFromSync || !canWriteTripsToSync) return;
+    const next = trips.map(mapTripToSync);
+    const current = getSyncTrips();
+    if (JSON.stringify(next) === JSON.stringify(current)) return;
+    setSyncTrips(next);
+  }, [canWriteTripsToSync, hasHydratedTripsFromSync, trips]);
 
   const updateTrip = (tripId: string, recipe: (trip: Trip) => Trip) => {
     setTrips((prev) => prev.map((trip) => (trip.id === tripId ? recipe(trip) : trip)));
@@ -660,8 +749,8 @@ export default function App() {
   const handleAcceptTrip = (tripId: string) => {
     const tripToAccept = trips.find((trip) => trip.id === tripId);
     if (!tripToAccept) return;
-    if (hasTripInProgress && tripToAccept.estado === 'asignado') {
-      toast.error('Ya tienes un viaje en curso. Finalízalo antes de aceptar otro.');
+    if (tripToAccept.estado !== 'asignado') {
+      toast.info('Este viaje ya fue aceptado o no está pendiente de aceptación.');
       return;
     }
     updateTrip(tripId, (trip) => appendTimeline({ ...trip, estado: 'aceptado', stage: 'aceptado' }, 'Chofer aceptó el viaje.'));
@@ -669,22 +758,24 @@ export default function App() {
     toast.success('Viaje aceptado. Revisa la ruta y presiona iniciar.');
   };
 
+  const canStartTrip = (tripId: string) => {
+    const trip = pendingTrips.find((item) => item.id === tripId);
+    if (!trip) return false;
+    if (trip.estado !== 'aceptado' && trip.estado !== 'en-planta') return false;
+    return !pendingTrips.some((item) => item.id !== tripId && operationalStates.includes(item.estado));
+  };
+
   const handleStartTrip = (tripId: string) => {
+    if (!canStartTrip(tripId)) {
+      toast.error('Debes finalizar tu viaje actual en curso antes de iniciar uno nuevo.');
+      return;
+    }
     updateTrip(tripId, (trip) =>
       appendTimeline({ ...trip, estado: 'en-ruta', stage: 'en-ruta', progress: Math.max(trip.progress, 15) }, 'Viaje iniciado. GPS activo.')
     );
     setActiveTripId(tripId);
     setShowMapScreen(true);
     toast.success('Viaje en curso. Se activó monitoreo GPS.');
-  };
-
-  const handleStartAssignedTrip = (tripId: string) => {
-    const trip = trips.find((item) => item.id === tripId);
-    if (!trip) return;
-    if (trip.estado === 'asignado') {
-      handleAcceptTrip(tripId);
-    }
-    handleStartTrip(tripId);
   };
 
   const handlePhotoCapture = (tripId: string | null) => {
@@ -708,7 +799,19 @@ export default function App() {
             progress: Math.max(trip.progress, 20),
             evidencias: [
               ...trip.evidencias,
-              { tipo: 'remito-inicial', nombre: `remito-inicial-${trip.id}.jpg`, fecha: new Date().toLocaleString('es-AR') }
+              {
+                id: `TD-${trip.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+                tripId: trip.id,
+                type: 'Remito',
+                name: `remito-inicial-${trip.id}.jpg`,
+                url: `local://remito-inicial/${trip.id}`,
+                date: new Date().toLocaleString('es-AR'),
+                uploadedBy: 'chofer',
+                tipo: 'Remito',
+                nombre: `remito-inicial-${trip.id}.jpg`,
+                fecha: new Date().toLocaleString('es-AR'),
+                source: 'chofer',
+              }
             ]
           },
           'Remito inicial cargado y salida registrada.'
@@ -724,7 +827,19 @@ export default function App() {
             progress: 100,
             evidencias: [
               ...trip.evidencias,
-              { tipo: 'remito-final', nombre: `remito-final-${trip.id}.jpg`, fecha: new Date().toLocaleString('es-AR') }
+              {
+                id: `TD-${trip.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+                tripId: trip.id,
+                type: 'Remito',
+                name: `remito-final-${trip.id}.jpg`,
+                url: `local://remito-final/${trip.id}`,
+                date: new Date().toLocaleString('es-AR'),
+                uploadedBy: 'chofer',
+                tipo: 'Remito',
+                nombre: `remito-final-${trip.id}.jpg`,
+                fecha: new Date().toLocaleString('es-AR'),
+                source: 'chofer',
+              }
             ]
           },
           'Entrega finalizada con evidencia.'
@@ -879,17 +994,92 @@ export default function App() {
     setShowDocumentUpload(null);
   };
 
+  const openTripDocModal = (tripId: string) => {
+    setTripDocModalTripId(tripId);
+    setTripDocForm({ type: 'Remito', name: '', url: '' });
+    setTripDocMockAttachment(null);
+  };
+
+  const simulateTripDocumentCapture = (mode: 'camara' | 'galeria') => {
+    if (!tripDocModalTripId) return;
+    const extension = tripDocForm.type === 'Gasto' ? 'pdf' : 'jpg';
+    const generatedName = `${tripDocForm.type.toLowerCase()}-${mode}-${tripDocModalTripId}-${Date.now().toString(36)}.${extension}`;
+    setTripDocMockAttachment(generatedName);
+    setTripDocForm((prev) => ({
+      ...prev,
+      name: generatedName,
+      url: `local://simulated/${mode}/${tripDocModalTripId}/${Date.now().toString(36)}`,
+    }));
+    toast.success(`Archivo simulado desde ${mode === 'camara' ? 'cámara' : 'galería'} listo para subir.`);
+  };
+
+  const submitTripDocument = async () => {
+    if (!tripDocModalTripId) return;
+    if (!tripDocMockAttachment) {
+      toast.error('Primero simula captura o adjunto del documento.');
+      return;
+    }
+    setTripDocUploading(true);
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    updateTrip(tripDocModalTripId, (trip) =>
+      appendTimeline(
+        {
+          ...trip,
+          evidencias: [
+            ...trip.evidencias,
+            {
+              id: `TD-${trip.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`,
+              tripId: trip.id,
+              type: tripDocForm.type,
+              name: tripDocForm.name.trim(),
+              url: tripDocForm.url.trim() || `local://doc/${trip.id}/${Date.now()}`,
+              date: new Date().toLocaleString('es-AR'),
+              uploadedBy: 'chofer',
+              tipo: tripDocForm.type,
+              nombre: tripDocForm.name.trim(),
+              fecha: new Date().toLocaleString('es-AR'),
+              source: 'chofer',
+            },
+          ],
+        },
+        `Documento cargado: ${tripDocForm.type} (${tripDocForm.name.trim()})`
+      )
+    );
+    setTripDocUploading(false);
+    setTripDocModalTripId(null);
+    setTripDocMockAttachment(null);
+    toast.success('Documento subido con éxito');
+  };
+
+  const removeTripEvidence = (tripId: string, evidenceId: string) => {
+    updateTrip(tripId, (trip) => {
+      const target = trip.evidencias.find((item) => item.id === evidenceId);
+      if (!target) return trip;
+      return appendTimeline(
+        {
+          ...trip,
+          evidencias: trip.evidencias.filter((item) => item.id !== evidenceId),
+        },
+        `Documento eliminado: ${target.nombre}`
+      );
+    });
+    toast.success('Documento eliminado');
+  };
+
   const handleTripEvidenceUpdate = () => {
     if (!selectedEvidenceUpdate) return;
-    const { tripId, evidenceIndex } = selectedEvidenceUpdate;
+    const { tripId, evidenceId } = selectedEvidenceUpdate;
     updateTrip(tripId, (trip) => {
-      const targetEvidence = trip.evidencias[evidenceIndex];
+      const targetIndex = trip.evidencias.findIndex((item) => item.id === evidenceId);
+      const targetEvidence = targetIndex >= 0 ? trip.evidencias[targetIndex] : null;
       if (!targetEvidence) return trip;
       const nextEvidence = [...trip.evidencias];
-      nextEvidence[evidenceIndex] = {
+      nextEvidence[targetIndex] = {
         ...targetEvidence,
         nombre: `${targetEvidence.tipo}-actualizado-${trip.id}.jpg`,
-        fecha: new Date().toLocaleString('es-AR')
+        name: `${targetEvidence.tipo}-actualizado-${trip.id}.jpg`,
+        date: new Date().toLocaleString('es-AR'),
+        fecha: new Date().toLocaleString('es-AR'),
       };
       return appendTimeline(
         {
@@ -927,8 +1117,11 @@ export default function App() {
 
   const handleResetDemoMobile = () => {
     requestGlobalDemoReset();
-    setTrips(initialMobileTrips);
-    setActiveTripId(initialMobileTrips[0]?.id ?? null);
+    setTrips([]);
+    setCanWriteTripsToSync(false);
+    setCurrentDriverId('driver-juan');
+    setCurrentDriverName('Juan Pérez');
+    setActiveTripId(null);
     setShowMapScreen(false);
     setExpandedTripIds([]);
     setExpandedHistoryIds([]);
@@ -968,8 +1161,15 @@ export default function App() {
                 return;
               }
               setCurrentDriverName(profile.driverName);
+              setCurrentDriverId(profile.id);
               previousTripIdsRef.current = trips
-                .filter((trip) => trip.driver === profile.driverName && trip.estado !== 'completado' && trip.estado !== 'cancelado')
+                .filter(
+                  (trip) =>
+                    ((Boolean(trip.driverId) && trip.driverId === profile.id) ||
+                    normalizeDriverName(trip.driver) === normalizeDriverName(profile.driverName)) &&
+                    trip.estado !== 'completado' &&
+                    trip.estado !== 'cancelado'
+                )
                 .map((trip) => trip.id);
               setIsAuthenticated(true);
               toast.success(`Sesión iniciada · ${profile.driverName}`);
@@ -1052,11 +1252,19 @@ export default function App() {
                   ? 'Visualiza solo la ruta activa, registra eventos y completa la entrega con evidencia.'
                   : 'Acepta y gestiona tus viajes pendientes. Cada tarjeta incluye camión, plan y acciones rápidas.'}
               </p>
+              {!showMapScreen && hasOperationalTrip ? (
+                <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Debes finalizar tu viaje actual en curso antes de iniciar uno nuevo.
+                </div>
+              ) : null}
 
               {!showMapScreen && pendingTrips.map((trip) => {
                 const isExpanded = expandedTripIds.includes(trip.id);
                 const isInProgress = trip.estado === 'en-ruta';
-                const canStartNow = !isInProgress && !hasTripInProgress;
+                const canStartNow = canStartTrip(trip.id);
+                const isBlockedByAnotherOperationalTrip =
+                  (trip.estado === 'aceptado' || trip.estado === 'en-planta') &&
+                  !canStartNow;
                 return (
                   <div key={trip.id} className="bg-white rounded-xl shadow-lg mb-3 overflow-hidden">
                     <button onClick={() => toggleTripExpanded(trip.id)} className="w-full p-4 text-left flex items-center justify-between">
@@ -1080,6 +1288,9 @@ export default function App() {
                             <p><span className="font-semibold">Carga:</span> {trip.carga}</p>
                             <p><span className="font-semibold">Distancia:</span> {trip.distancia} · ETA {trip.eta}</p>
                             <p><span className="font-semibold">Plan:</span> {trip.plan}</p>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600">
+                              La gestión de documentos está disponible en la pantalla <span className="font-semibold">Ruta en Curso</span>.
+                            </div>
                           </div>
                           <div className="grid grid-cols-1 gap-2">
                             <button
@@ -1088,15 +1299,28 @@ export default function App() {
                             >
                               <Map className="w-4 h-4" /> Mapa
                             </button>
-                            {!isInProgress && (
+                            {!isInProgress && trip.estado === 'asignado' && (
                               <button
-                                onClick={() => handleStartAssignedTrip(trip.id)}
+                                onClick={() => handleAcceptTrip(trip.id)}
+                                className="py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold"
+                              >
+                                Aceptar viaje
+                              </button>
+                            )}
+                            {!isInProgress && trip.estado !== 'asignado' && (
+                              <button
+                                onClick={() => handleStartTrip(trip.id)}
                                 disabled={!canStartNow}
                                 className="py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold disabled:bg-gray-300"
                               >
                                 Iniciar viaje ahora
                               </button>
                             )}
+                            {isBlockedByAnotherOperationalTrip ? (
+                              <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                                Debes finalizar tu viaje actual en curso antes de iniciar uno nuevo.
+                              </div>
+                            ) : null}
                           </div>
                         </motion.div>
                       )}
@@ -1142,13 +1366,65 @@ export default function App() {
                         currentStage={activeTrip.stage}
                         onAdvance={(nextStage) => handleAdvanceStage(activeTrip.id, nextStage)}
                       />
+                      <div className="mb-2 rounded-lg border border-slate-200 bg-white p-2">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-semibold text-slate-700">Documentos del Viaje ({activeTrip.evidencias.length})</p>
+                          <button
+                            type="button"
+                            onClick={() => openTripDocModal(activeTrip.id)}
+                            className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700"
+                          >
+                            Subir
+                          </button>
+                        </div>
+                        {activeTrip.evidencias.length === 0 ? (
+                          <p className="text-[11px] text-slate-500">Sin documentos en este viaje.</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {activeTrip.evidencias.map((doc, idx) => (
+                              <div key={doc.id || `${doc.nombre}-${idx}`} className="flex items-center justify-between gap-2 rounded bg-slate-50 px-2 py-1 text-[11px] text-slate-700">
+                                <span className="truncate">
+                                  [{doc.source === 'admin' ? 'Admin' : 'Chofer'}] {doc.tipo} · {doc.nombre}
+                                </span>
+                                <div className="flex shrink-0 gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => doc.id && setSelectedEvidenceUpdate({ tripId: activeTrip.id, evidenceId: doc.id })}
+                                    className="rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700"
+                                  >
+                                    Actualizar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => doc.id && removeTripEvidence(activeTrip.id, doc.id)}
+                                    className="rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"
+                                  >
+                                    Eliminar
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <p className="text-[11px] text-slate-500 mb-2">
                         Consejo operativo: confirma cada hito apenas ocurra para mantener el seguimiento en tiempo real.
                       </p>
-                      {activeTrip.estado !== 'en-ruta' && activeTrip.estado !== 'completado' ? (
-                        <button onClick={() => handleStartTrip(activeTrip.id)} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors">
-                          Iniciar viaje ahora
+                      {activeTrip.estado === 'asignado' ? (
+                        <button onClick={() => handleAcceptTrip(activeTrip.id)} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors">
+                          Aceptar viaje
                         </button>
+                      ) : activeTrip.estado !== 'en-ruta' && activeTrip.estado !== 'completado' ? (
+                        <>
+                          <button onClick={() => handleStartTrip(activeTrip.id)} disabled={!canStartTrip(activeTrip.id)} className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors">
+                            Iniciar viaje ahora
+                          </button>
+                          {!canStartTrip(activeTrip.id) ? (
+                            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                              Debes finalizar tu viaje actual en curso antes de iniciar uno nuevo.
+                            </p>
+                          ) : null}
+                        </>
                       ) : (
                         <button
                           onClick={() => handleArrival(activeTrip.id)}
@@ -1220,7 +1496,7 @@ export default function App() {
               ) : (
                 <div className="space-y-3">
                   {trips
-                    .filter((trip) => trip.estado === 'completado' || trip.estado === 'cancelado')
+                    .filter((trip) => isTripForCurrentDriver(trip) && (trip.estado === 'completado' || trip.estado === 'cancelado'))
                     .map((trip) => {
                       const isExpanded = expandedHistoryIds.includes(trip.id);
                       return (
@@ -1273,6 +1549,15 @@ export default function App() {
 
                                 <div>
                                   <h4 className="text-sm font-semibold text-gray-800 mb-1">Documentos y evidencias</h4>
+                                  <div className="mb-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => openTripDocModal(trip.id)}
+                                      className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700"
+                                    >
+                                      Subir documento
+                                    </button>
+                                  </div>
                                   {trip.evidencias.length === 0 ? (
                                     <p className="text-xs text-gray-500">Sin documentos cargados en este viaje.</p>
                                   ) : (
@@ -1282,14 +1567,20 @@ export default function App() {
                                           <span className="truncate">
                                             {doc.tipo} · {doc.nombre} · {doc.fecha}
                                           </span>
-                                          {doc.tipo.includes('remito') && (
+                                          <div className="flex shrink-0 gap-1">
                                             <button
-                                              onClick={() => setSelectedEvidenceUpdate({ tripId: trip.id, evidenceIndex: idx })}
-                                              className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
+                                              onClick={() => doc.id && setSelectedEvidenceUpdate({ tripId: trip.id, evidenceId: doc.id })}
+                                              className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-100"
                                             >
                                               Actualizar
                                             </button>
-                                          )}
+                                            <button
+                                              onClick={() => doc.id && removeTripEvidence(trip.id, doc.id)}
+                                              className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-100"
+                                            >
+                                              Eliminar
+                                            </button>
+                                          </div>
                                         </div>
                                       ))}
                                     </div>
@@ -1873,7 +2164,95 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Modal: Actualizar remito en historial */}
+      {/* Modal: Documentos del viaje */}
+      <AnimatePresence>
+        {tripDocModalTripId && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-90 z-[1000] flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl w-full max-w-sm p-6"
+            >
+              <h3 className="text-xl font-bold mb-3 text-gray-800 text-center">Subir documento del viaje</h3>
+              <p className="text-xs text-gray-500 text-center mb-3">
+                Carga simulada: no se suben archivos reales.
+              </p>
+              <div className="space-y-3 mb-4">
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Tipo</label>
+                  <select
+                    value={tripDocForm.type}
+                    onChange={(event) => setTripDocForm((prev) => ({ ...prev, type: event.target.value as TripDocType }))}
+                    className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    {(['Remito', 'Ticket', 'Gasto', 'Otro'] as TripDocType[]).map((item) => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Simular origen del archivo</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => simulateTripDocumentCapture('camara')}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700"
+                    >
+                      <Camera className="h-3.5 w-3.5" />
+                      Capturar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => simulateTripDocumentCapture('galeria')}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      Adjuntar
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2">
+                  <p className="text-[11px] font-medium text-slate-700">Archivo simulado</p>
+                  <p className="text-[11px] text-slate-500">
+                    {tripDocMockAttachment ?? 'Aún no se simuló captura/adjunto.'}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setTripDocModalTripId(null)}
+                  className="px-4 py-3 bg-gray-200 text-gray-700 rounded-xl font-semibold"
+                  disabled={tripDocUploading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={submitTripDocument}
+                  className="px-4 py-3 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 disabled:bg-gray-300"
+                  disabled={tripDocUploading}
+                >
+                  {tripDocUploading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      Subiendo...
+                    </span>
+                  ) : (
+                    'Guardar'
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal: Actualizar documento en historial */}
       <AnimatePresence>
         {selectedEvidenceUpdate && (
           <motion.div
@@ -1889,7 +2268,7 @@ export default function App() {
               className="bg-white rounded-2xl w-full max-w-sm p-6"
             >
               <h3 className="text-xl font-bold mb-3 text-gray-800 text-center">
-                Actualizar remito
+                Actualizar documento
               </h3>
               <p className="text-sm text-gray-600 text-center mb-4">
                 Reemplaza el documento adjunto de este viaje en historial.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import { divIcon, LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -9,7 +9,7 @@ import { Input } from "../ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { realtimeAlerts } from "../../lib/mock-data";
-import { AlertTriangle, Clock, Filter, MapPin, Printer, Search, Truck } from "lucide-react";
+import { AlertTriangle, Clock, Filter, FolderOpen, MapPin, Printer, Search, Truck } from "lucide-react";
 import { useOperationsData, VehicleFleetKind, ZoneId, TripStatus, PlannedTrip } from "../../lib/operations-data";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { TripImportModal } from "./trip-import-modal";
@@ -70,8 +70,13 @@ function MapResizeHandler({ watchValue }: { watchValue: string }) {
 
 function MapViewportHandler({ center, zoom }: { center: LatLngExpression; zoom: number }) {
   const map = useMap();
+  const lastViewportKeyRef = useRef<string>("");
   useEffect(() => {
-    map.flyTo(center as [number, number], zoom, { animate: true, duration: 0.9 });
+    const [lat, lng] = center as [number, number];
+    const nextKey = `${lat.toFixed(6)}:${lng.toFixed(6)}:${zoom}`;
+    if (lastViewportKeyRef.current === nextKey) return;
+    lastViewportKeyRef.current = nextKey;
+    map.flyTo([lat, lng], zoom, { animate: true, duration: 0.55 });
   }, [center, zoom, map]);
   return null;
 }
@@ -107,7 +112,10 @@ function UnifiedRouteMap({
   getFleetKind: (plate: string) => VehicleFleetKind | undefined;
 }) {
   const selectedZoneConfig = selectedZone ? zones.find((zone) => zone.id === selectedZone) : null;
-  const center = selectedZoneConfig ? selectedZoneConfig.mapCenter : ([-34.4, -61.5] as LatLngExpression);
+  const center = useMemo<LatLngExpression>(() => {
+    if (!selectedZoneConfig) return [-34.4, -61.5] as LatLngExpression;
+    return selectedZoneConfig.mapCenter;
+  }, [selectedZoneConfig]);
   const zoom = selectedZoneConfig ? selectedZoneConfig.zoom : 5;
   const [resolvedRoutes, setResolvedRoutes] = useState<Record<string, LatLngExpression[]>>({});
 
@@ -244,6 +252,10 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
   const [printOpen, setPrintOpen] = useState(false);
   const [simulatingDownload, setSimulatingDownload] = useState(false);
   const isDarkTheme = resolvedTheme === "dark";
+
+  function openTripDocuments(tripId: string) {
+    window.dispatchEvent(new CustomEvent("tf-open-trip-documents", { detail: { tripId } }));
+  }
 
   const fleetByPlate = useMemo(() => {
     const map = new Map<string, VehicleFleetKind>();
@@ -390,9 +402,12 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
           <TripAssignmentModal
             buttonLabel="Asignar nuevo viaje"
             buttonClassName="w-full sm:w-auto"
-            onTripCreated={(tripId, zoneId) => {
-              setSelectedZone(zoneId);
-              setSearch(tripId);
+            onTripCreated={(tripId) => {
+              setSelectedZone(null);
+              setSearch("");
+              setSelectedStatus("all");
+              setSelectedFleet("all");
+              toast.success(`Viaje ${tripId} creado y visible en el tablero general.`);
             }}
           />
         </div>
@@ -508,6 +523,10 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => openTripDocuments(trip.id)}>
+                        <FolderOpen className="mr-1 h-3 w-3" />
+                        Docs
+                      </Button>
                       <Badge variant="outline" className="gap-1">
                         <span className={`h-2 w-2 rounded-full ${zone?.colorClass ?? "bg-blue-500"}`} />
                         {zone?.name ?? trip.zoneId}

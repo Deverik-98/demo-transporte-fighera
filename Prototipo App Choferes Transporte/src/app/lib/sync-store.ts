@@ -1,18 +1,21 @@
 import { LatLngExpression } from "leaflet";
 
-export type SyncZoneId = "zona-argentina" | "zona-uruguay";
+export type SyncZoneId = string;
 export type SyncTripStatus =
-  | "Pendiente de aceptación"
+  | "Pendiente"
+  | "Sin chofer"
   | "Asignado"
-  | "En Planta"
-  | "Cargando"
-  | "En Ruta"
+  | "Aceptado"
+  | "En planta"
+  | "En ruta"
   | "Entregado"
-  | "Cancelado";
+  | "Cancelado"
+  | "Reprogramado";
 
 export type SyncTrip = {
   id: string;
   zoneId: SyncZoneId;
+  driverId?: string;
   driver: string;
   vehiclePlate: string;
   origin: string;
@@ -23,8 +26,22 @@ export type SyncTrip = {
   cargo: string;
   plan: string;
   scheduledAt: string;
+  clientCompany?: string;
+  remitoNumber?: string;
   timeline?: Array<{ timestamp: string; descripcion: string }>;
-  evidencias?: Array<{ tipo: string; nombre: string; fecha: string }>;
+  evidencias?: Array<{
+    id: string;
+    tripId?: string;
+    name?: string;
+    type?: "Remito" | "Ticket" | "Gasto" | "Otro";
+    url?: string;
+    date?: string;
+    uploadedBy?: string;
+    tipo?: string;
+    nombre?: string;
+    fecha?: string;
+    source?: "admin" | "chofer";
+  }>;
 };
 
 export type SyncAlert = {
@@ -40,7 +57,7 @@ export type SyncAlert = {
 };
 
 export const TRIPS_KEY = "tf_sync_trips_v1";
-export const ALERTS_KEY = "tf_sync_alerts_v1";
+export const ALERTS_KEY = "tf_sync_alerts_v2";
 export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
 export const DOCUMENTS_KEY = "tf_sync_documents_v1";
@@ -60,8 +77,21 @@ function readJson<T>(key: string, fallback: T): T {
 
 function writeJson<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(key, JSON.stringify(value));
+  const serialized = JSON.stringify(value);
+  window.localStorage.setItem(key, serialized);
   window.dispatchEvent(new CustomEvent(INTERNAL_EVENT, { detail: { key } }));
+  try {
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key,
+        newValue: serialized,
+        storageArea: window.localStorage,
+        url: window.location.href,
+      }),
+    );
+  } catch {
+    // Fallback: custom event already syncs current tab.
+  }
 }
 
 export function getSyncTrips() {

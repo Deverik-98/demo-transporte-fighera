@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ThemeProvider } from "next-themes";
 import { Button } from "./components/ui/button";
 import { Badge } from "./components/ui/badge";
@@ -50,7 +50,19 @@ function AppContent() {
   const [currentView, setCurrentView] = useState("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [currentUserRole, setCurrentUserRole] = useState<UserRole>("Administrador");
+  const [documentsFocusTripId, setDocumentsFocusTripId] = useState<string | null>(null);
   const { resetDemoData } = useOperationsData();
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ tripId?: string }>).detail;
+      if (!detail?.tripId) return;
+      setDocumentsFocusTripId(detail.tripId);
+      setCurrentView("documents");
+    };
+    window.addEventListener("tf-open-trip-documents", handler);
+    return () => window.removeEventListener("tf-open-trip-documents", handler);
+  }, []);
 
   const menuItems = [
     { id: "dashboard", label: "Centro de Operaciones", icon: LayoutDashboard },
@@ -74,6 +86,10 @@ function AppContent() {
               setCurrentView("dashboard");
               window.dispatchEvent(new CustomEvent("tf-focus-trip", { detail: { tripId, zoneId } }));
             }}
+            onOpenTripDocuments={(tripId) => {
+              setDocumentsFocusTripId(tripId);
+              setCurrentView("documents");
+            }}
           />
         );
       case "costs":
@@ -83,7 +99,12 @@ function AppContent() {
       case "vehicles":
         return <VehiclesModule />;
       case "documents":
-        return <DocumentsModule />;
+        return (
+          <DocumentsModule
+            focusTripId={documentsFocusTripId}
+            onFocusTripConsumed={() => setDocumentsFocusTripId(null)}
+          />
+        );
       case "configurations":
         return <ExpirationConfig />;
       case "security":

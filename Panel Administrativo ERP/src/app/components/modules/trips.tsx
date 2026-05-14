@@ -8,7 +8,8 @@ import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useOperationsData, PlannedTrip, TripStage, ZoneId } from "../../lib/operations-data";
-import { AlertTriangle, CheckCircle2, FolderOpen, Navigation, Palette, PenSquare, Printer, Search, Trash2, Truck, XCircle } from "lucide-react";
+import { formatTripRouteStops } from "../../lib/trip-route";
+import { AlertTriangle, CheckCircle2, FolderOpen, Navigation, Palette, PenSquare, Plus, Printer, Search, Trash2, Truck, XCircle } from "lucide-react";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { realtimeAlerts } from "../../lib/mock-data";
 import { useSyncAlerts } from "../../lib/sync-store";
@@ -66,8 +67,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
     status: "Pendiente" as TripStage,
     driver: "",
     vehiclePlate: "",
-    origin: "",
-    destination: "",
+    routeStops: ["", ""] as string[],
     cargo: "",
     plan: "",
     scheduledAt: "",
@@ -134,7 +134,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
         trip.vehiclePlate.toLowerCase().includes(query) ||
         trip.clientCompany.toLowerCase().includes(query) ||
         trip.remitoNumber.toLowerCase().includes(query) ||
-        `${trip.origin} ${trip.destination}`.toLowerCase().includes(query);
+        `${trip.origin} ${trip.destination} ${formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}`.toLowerCase().includes(query);
       const matchesStatus = statusFilter === "all" ? true : trip.status === statusFilter;
       const matchesZone = zoneFilter === "all" ? true : trip.zoneId === zoneFilter;
 
@@ -180,6 +180,19 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
     return labels.length ? labels.join(" · ") : "sin filtros (todos los viajes visibles)";
   }, [statusFilter, zoneFilter, zones, datePreset, specificDate, search]);
 
+  const suggestVehiclePlateForDriver = (driverName: string, zoneId: string) => {
+    const zoneFleet = vehicles.filter((vehicle) => vehicle.type === "Camión" && vehicle.zoneId === zoneId);
+    const recent = [...trips]
+      .reverse()
+      .find((trip) => trip.driver === driverName && zoneFleet.some((vehicle) => vehicle.plate === trip.vehiclePlate));
+    if (recent?.vehiclePlate) return recent.vehiclePlate;
+    return zoneFleet[0]?.plate ?? "";
+  };
+  const editZoneVehicles = useMemo(
+    () => vehicles.filter((vehicle) => vehicle.type === "Camión" && vehicle.zoneId === editForm.zoneId),
+    [vehicles, editForm.zoneId],
+  );
+
   function focusTripInMap(trip: PlannedTrip) {
     onFocusTripInMap?.(trip.id, trip.zoneId);
   }
@@ -191,8 +204,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       status: trip.status,
       driver: trip.status === "Sin chofer" ? "" : trip.driver,
       vehiclePlate: trip.status === "Sin chofer" ? "" : trip.vehiclePlate,
-      origin: trip.origin,
-      destination: trip.destination,
+      routeStops: trip.routeStops.length >= 2 ? [...trip.routeStops] : [trip.origin, trip.destination],
       cargo: trip.cargo,
       plan: trip.plan,
       scheduledAt: trip.scheduledAt,
@@ -215,13 +227,17 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       toast.error("Seleccioná un camión para guardar el viaje.");
       return;
     }
+    const trimmed = editForm.routeStops.map((s) => s.trim());
+    if (trimmed.length < 2 || trimmed.some((s) => !s)) {
+      toast.error("Completá todas las paradas (origen, destino e intermedias).");
+      return;
+    }
     const updated = updateTrip(editingTripId, {
       zoneId: editForm.zoneId,
       status: nextStatus,
       driver: editForm.driver,
       vehiclePlate: editForm.vehiclePlate,
-      origin: editForm.origin,
-      destination: editForm.destination,
+      routeStops: trimmed,
       cargo: editForm.cargo,
       plan: editForm.plan,
       scheduledAt: editForm.scheduledAt,
@@ -309,7 +325,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             <Printer className="h-4 w-4" />
             Imprimir planilla filtrada
           </Button>
-          <TripAssignmentModal buttonLabel="Crear y asignar viaje" onTripCreated={(tripId) => setSearch(tripId)} />
+          <TripAssignmentModal buttonLabel="Crear viaje" onTripCreated={(tripId) => setSearch(tripId)} />
         </div>
       </div>
 
@@ -513,7 +529,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                                 {trip.vehiclePlate}
                               </Badge>
                             </div>
-                            <p className="text-muted-foreground">{trip.origin} → {trip.destination}</p>
+                            <p className="text-muted-foreground">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</p>
                             <p><span className="font-medium">Zona:</span> {zoneName}</p>
                             <p><span className="font-medium">Chofer:</span> {trip.driver}</p>
                             <p><span className="font-medium">Patente:</span> {trip.vehiclePlate}</p>
@@ -585,7 +601,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1260px] border-collapse text-xs">
+                <table className="w-full min-w-[1180px] border-collapse text-xs">
                   <thead>
                     <tr className="border-b bg-muted/70 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="px-2 py-1.5 text-left">ID Viaje</th>
@@ -593,8 +609,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                       <th className="px-2 py-1.5 text-left">Chofer</th>
                       <th className="px-2 py-1.5 text-left">Empresa/Cliente</th>
                       <th className="px-2 py-1.5 text-left">Camión (Tractor)</th>
-                      <th className="px-2 py-1.5 text-left">Origen</th>
-                      <th className="px-2 py-1.5 text-left">Destino</th>
+                      <th className="px-2 py-1.5 text-left">Ruta (paradas)</th>
                       <th className="px-2 py-1.5 text-left">Material/Carga</th>
                       <th className="px-2 py-1.5 text-left">Estado</th>
                       <th className="px-2 py-1.5 text-left">Incidencias</th>
@@ -605,7 +620,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                     {groupedByZone.map((zoneGroup) => (
                       <Fragment key={`zone-block-${zoneGroup.zoneId}`}>
                         <tr className="bg-gray-800 text-xs font-semibold uppercase tracking-wide text-gray-100">
-                          <td className="px-2 py-1.5" colSpan={11}>
+                          <td className="px-2 py-1.5" colSpan={10}>
                             Zona: {zoneGroup.zoneName}
                           </td>
                         </tr>
@@ -619,8 +634,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               <td className="px-2 py-1.5">{trip.driver}</td>
                               <td className="px-2 py-1.5">{trip.clientCompany}</td>
                               <td className="px-2 py-1.5 font-mono">{trip.vehiclePlate}</td>
-                              <td className="px-2 py-1.5">{trip.origin}</td>
-                              <td className="px-2 py-1.5">{trip.destination}</td>
+                              <td className="max-w-[280px] px-2 py-1.5 leading-snug">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="px-2 py-1.5">{trip.cargo}</td>
                               <td className="px-2 py-1.5">
                                 <Badge variant={statusBadgeVariant(trip.status) as "secondary"}>{trip.status}</Badge>
@@ -701,7 +715,26 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Zona</label>
-              <Select value={editForm.zoneId} onValueChange={(value) => setEditForm((prev) => ({ ...prev, zoneId: value }))}>
+              <Select
+                value={editForm.zoneId}
+                onValueChange={(value) =>
+                  setEditForm((prev) => {
+                    const keepsCurrent = vehicles.some(
+                      (vehicle) =>
+                        vehicle.type === "Camión" && vehicle.zoneId === value && vehicle.plate === prev.vehiclePlate,
+                    );
+                    const suggestedPlate =
+                      prev.driver.trim() && prev.driver !== "Sin asignar"
+                        ? suggestVehiclePlateForDriver(prev.driver.trim(), value)
+                        : "";
+                    return {
+                      ...prev,
+                      zoneId: value,
+                      vehiclePlate: keepsCurrent ? prev.vehiclePlate : suggestedPlate,
+                    };
+                  })
+                }
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {zones.map((zone) => (
@@ -736,16 +769,21 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               <Select
                 value={editForm.driver || "__sin_chofer__"}
                 onValueChange={(value) =>
-                  setEditForm((prev) => ({
-                    ...prev,
-                    driver: value === "__sin_chofer__" ? "" : value,
-                    status:
-                      value === "__sin_chofer__"
-                        ? "Sin chofer"
-                        : prev.status === "Sin chofer"
-                          ? "Asignado"
-                          : prev.status,
-                  }))
+                  setEditForm((prev) => {
+                    const nextDriver = value === "__sin_chofer__" ? "" : value;
+                    const suggestedVehicle = nextDriver ? suggestVehiclePlateForDriver(nextDriver, prev.zoneId) : "";
+                    return {
+                      ...prev,
+                      driver: nextDriver,
+                      vehiclePlate: nextDriver ? suggestedVehicle || prev.vehiclePlate : "",
+                      status:
+                        value === "__sin_chofer__"
+                          ? "Sin chofer"
+                          : prev.status === "Sin chofer"
+                            ? "Asignado"
+                            : prev.status,
+                    };
+                  })
                 }
               >
                 <SelectTrigger><SelectValue placeholder="Seleccionar chofer" /></SelectTrigger>
@@ -771,19 +809,74 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                 <SelectTrigger><SelectValue placeholder="Seleccionar camión" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__sin_camion__">Sin camión asignado</SelectItem>
-                  {vehicles.filter((vehicle) => vehicle.type === "Camión").map((vehicle) => (
+                  {editZoneVehicles.map((vehicle) => (
                     <SelectItem key={vehicle.id} value={vehicle.plate}>{vehicle.plate}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Origen</label>
-              <Input value={editForm.origin} onChange={(event) => setEditForm((prev) => ({ ...prev, origin: event.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Destino</label>
-              <Input value={editForm.destination} onChange={(event) => setEditForm((prev) => ({ ...prev, destination: event.target.value }))} />
+            <div className="space-y-2 sm:col-span-2">
+              <label className="text-xs font-medium text-muted-foreground">Paradas en orden</label>
+              <div className="space-y-1">
+                {editForm.routeStops.map((label, idx) => (
+                  <Fragment key={`edit-stop-${idx}`}>
+                    <div className="flex gap-2">
+                      <Input
+                        value={label}
+                        placeholder={idx === 0 ? "Origen" : idx === editForm.routeStops.length - 1 ? "Destino" : "Parada"}
+                        onChange={(event) => {
+                          const v = event.target.value;
+                          setEditForm((prev) => {
+                            const n = [...prev.routeStops];
+                            n[idx] = v;
+                            return { ...prev, routeStops: n };
+                          });
+                        }}
+                      />
+                      {idx > 0 && idx < editForm.routeStops.length - 1 ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="shrink-0"
+                          aria-label="Quitar parada"
+                          onClick={() =>
+                            setEditForm((prev) =>
+                              prev.routeStops.length <= 2
+                                ? prev
+                                : { ...prev, routeStops: prev.routeStops.filter((_, i) => i !== idx) },
+                            )
+                          }
+                        >
+                          ×
+                        </Button>
+                      ) : (
+                        <span className="w-10 shrink-0" />
+                      )}
+                    </div>
+                    {idx < editForm.routeStops.length - 1 ? (
+                      <div className="flex justify-center py-0.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 rounded-full"
+                          aria-label="Agregar parada"
+                          onClick={() =>
+                            setEditForm((prev) => {
+                              const n = [...prev.routeStops];
+                              n.splice(idx + 1, 0, "Parada");
+                              return { ...prev, routeStops: n };
+                            })
+                          }
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ) : null}
+                  </Fragment>
+                ))}
+              </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Empresa/Cliente</label>
@@ -879,8 +972,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                             <th className="border border-black px-1 py-1 text-left">Chofer</th>
                             <th className="border border-black px-1 py-1 text-left">Empresa</th>
                             <th className="border border-black px-1 py-1 text-left">Camión</th>
-                            <th className="border border-black px-1 py-1 text-left">Origen</th>
-                            <th className="border border-black px-1 py-1 text-left">Destino</th>
+                            <th className="border border-black px-1 py-1 text-left">Ruta</th>
                             <th className="border border-black px-1 py-1 text-left">Carga</th>
                             <th className="border border-black px-1 py-1 text-left">Estado</th>
                           </tr>
@@ -893,8 +985,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               <td className="border border-black px-1 py-1">{trip.driver}</td>
                               <td className="border border-black px-1 py-1">{trip.clientCompany}</td>
                               <td className="border border-black px-1 py-1">{trip.vehiclePlate}</td>
-                              <td className="border border-black px-1 py-1">{trip.origin}</td>
-                              <td className="border border-black px-1 py-1">{trip.destination}</td>
+                              <td className="border border-black px-1 py-1">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="border border-black px-1 py-1">{trip.cargo}</td>
                               <td className="border border-black px-1 py-1">{trip.status}</td>
                             </tr>

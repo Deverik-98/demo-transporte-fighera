@@ -199,11 +199,10 @@ export function TripImportModal({ buttonClassName, onTripsImported }: TripImport
         driverId: driver.id,
         vehicleId: vehicle.id,
         routeId: route?.id,
+        routeStops: [row.origin.trim(), row.destination.trim()].filter(Boolean),
         manualRoute: route
           ? undefined
           : {
-              origin: row.origin,
-              destination: row.destination,
               path: buildFallbackPath(zone.mapCenter),
             },
         cargo: row.cargo,

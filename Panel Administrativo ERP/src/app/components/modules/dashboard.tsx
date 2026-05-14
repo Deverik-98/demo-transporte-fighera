@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { realtimeAlerts } from "../../lib/mock-data";
 import { AlertTriangle, Clock, Filter, FolderOpen, MapPin, Printer, Search, Truck } from "lucide-react";
 import { useOperationsData, VehicleFleetKind, ZoneId, TripStatus, PlannedTrip } from "../../lib/operations-data";
+import { formatTripRouteStops } from "../../lib/trip-route";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { TripImportModal } from "./trip-import-modal";
 import { useTheme } from "next-themes";
@@ -200,7 +201,7 @@ function UnifiedRouteMap({
                 <Popup>
                   <div className="space-y-1">
                     <div className="font-medium">{trip.id}</div>
-                    <div>{trip.origin} {"->"} {trip.destination}</div>
+                    <div>{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</div>
                     <div>Zona: {tripZone?.name ?? trip.zoneId}</div>
                     <div>Chofer: {trip.driver}</div>
                     <div>
@@ -301,7 +302,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
         trip.driver.toLowerCase().includes(query) ||
         trip.vehiclePlate.toLowerCase().includes(query) ||
         trip.clientCompany.toLowerCase().includes(query) ||
-        `${trip.origin} ${trip.destination}`.toLowerCase().includes(query);
+        `${trip.origin} ${trip.destination} ${formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}`.toLowerCase().includes(query);
       return statusMatch && fleetMatch && searchMatch;
     });
   }, [trips, selectedStatus, selectedFleet, search, getFleetKind]);
@@ -499,7 +500,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                 return (
                   <div key={trip.id} className="flex flex-col gap-2 rounded-lg border p-3 md:flex-row md:items-center md:justify-between">
                     <div className="space-y-1">
-                      <p className="text-sm">{trip.id} · {trip.origin} {"->"} {trip.destination}</p>
+                      <p className="text-sm">{trip.id} · {formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</p>
                       <p className="text-xs text-muted-foreground">
                         {trip.clientCompany} · <span className="font-mono text-foreground">{trip.remitoNumber}</span>
                       </p>
@@ -609,8 +610,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                             <th className="border border-black px-1 py-1 text-left">Chofer</th>
                             <th className="border border-black px-1 py-1 text-left">Empresa</th>
                             <th className="border border-black px-1 py-1 text-left">Camión</th>
-                            <th className="border border-black px-1 py-1 text-left">Origen</th>
-                            <th className="border border-black px-1 py-1 text-left">Destino</th>
+                            <th className="border border-black px-1 py-1 text-left">Ruta</th>
                             <th className="border border-black px-1 py-1 text-left">Carga</th>
                             <th className="border border-black px-1 py-1 text-left">Estado</th>
                           </tr>
@@ -623,8 +623,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                               <td className="border border-black px-1 py-1">{trip.driver}</td>
                               <td className="border border-black px-1 py-1">{trip.clientCompany}</td>
                               <td className="border border-black px-1 py-1">{trip.vehiclePlate}</td>
-                              <td className="border border-black px-1 py-1">{trip.origin}</td>
-                              <td className="border border-black px-1 py-1">{trip.destination}</td>
+                              <td className="border border-black px-1 py-1">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="border border-black px-1 py-1">{trip.cargo}</td>
                               <td className="border border-black px-1 py-1">{trip.status}</td>
                             </tr>

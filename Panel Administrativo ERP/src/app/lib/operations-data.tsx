@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { expirationConfig, realtimeAlerts } from "./mock-data";
 import { generateSystemRemitoReference, isPrincipalClientCompany } from "./trip-clients";
 import { embeddedOperationalZoneFeatures } from "./embedded-operational-zone-geometries";
+import { buildPathForStopCount, formatTripRouteStops } from "./trip-route";
 import {
   getSyncDocuments,
   getSyncSettings,
@@ -115,6 +116,8 @@ export type PlannedTrip = {
   vehiclePlate: string;
   origin: string;
   destination: string;
+  /** Paradas en orden (primera = origen, última = destino). */
+  routeStops: string[];
   routePath: LatLngExpression[];
   progress: number;
   status: TripStage;
@@ -155,12 +158,14 @@ export type ExpirationRule = {
 
 type TripInput = {
   zoneId: ZoneId;
-  driverId: string;
-  vehicleId: string;
+  /** Opcional en creación: el viaje puede nacer sin chofer/camión. */
+  driverId?: string;
+  /** Opcional en creación: el viaje puede nacer sin chofer/camión. */
+  vehicleId?: string;
   routeId?: string;
+  /** Paradas con nombre, en orden (≥2). */
+  routeStops: string[];
   manualRoute?: {
-    origin: string;
-    destination: string;
     path: LatLngExpression[];
   };
   cargo: string;
@@ -174,8 +179,8 @@ type TripUpdateInput = {
   zoneId: ZoneId;
   driver: string;
   vehiclePlate: string;
-  origin: string;
-  destination: string;
+  /** Paradas en orden (≥2). Origen y destino son el primero y el último. */
+  routeStops: string[];
   cargo: string;
   plan: string;
   scheduledAt: string;
@@ -510,6 +515,18 @@ function normalizeTripsData(items: PlannedTrip[]) {
   return items.map((item) => {
     const normalizedStatus = normalizeTripStage(item.status);
     const evidencias = normalizeTripDocuments(item.id, item.evidencias);
+    const rawStops = Array.isArray((item as { routeStops?: unknown }).routeStops)
+      ? (item as { routeStops: string[] }).routeStops.map((s) => String(s).trim()).filter(Boolean)
+      : [];
+    const o = String(item.origin ?? "").trim();
+    const d = String(item.destination ?? "").trim();
+    const routeStops = rawStops.length >= 2 ? rawStops : [o || "N/D", d || "N/D"];
+    const origin = routeStops[0];
+    const destination = routeStops[routeStops.length - 1];
+    let routePath = item.routePath ?? [];
+    if (routeStops.length >= 2 && Array.isArray(routePath) && routePath.length >= 2) {
+      routePath = buildPathForStopCount(routePath, routeStops.length);
+    }
     return {
       ...alignTripWithStage(item, normalizedStatus),
       zoneId: normalizeZoneId(item.zoneId),
@@ -521,6 +538,10 @@ function normalizeTripsData(items: PlannedTrip[]) {
       clientCompany: item.clientCompany?.trim() || "Cliente general",
       remitoNumber: item.remitoNumber?.trim() || `REM-${item.id}`,
       evidencias,
+      origin,
+      destination,
+      routeStops,
+      routePath,
     };
   });
 }
@@ -754,8 +775,15 @@ const initialTrips: PlannedTrip[] = [
     driver: "Juan Pérez",
     vehiclePlate: "AB123CD",
     origin: "Buenos Aires",
-    destination: "La Plata",
-    routePath: initialRouteTemplates[0].path,
+    destination: "Córdoba",
+    routeStops: ["Buenos Aires", "Zárate", "Rosario", "Villa María", "Córdoba"],
+    routePath: [
+      [-34.6037, -58.3816],
+      [-34.0981, -59.0286],
+      [-32.9468, -60.6393],
+      [-32.4085, -63.2466],
+      [-31.4167, -64.1833],
+    ],
     progress: 62,
     status: "En ruta",
     cargo: "Insumos alimenticios - 19 toneladas",
@@ -773,6 +801,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "XY456EF",
     origin: "Santa Fe",
     destination: "Rafaela",
+    routeStops: ["Santa Fe", "Rafaela"],
     routePath: initialRouteTemplates[1].path,
     progress: 28,
     status: "En planta",
@@ -791,6 +820,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "MN789GH",
     origin: "Mendoza",
     destination: "San Juan",
+    routeStops: ["Mendoza", "San Rafael", "San Juan"],
     routePath: initialRouteTemplates[2].path,
     progress: 75,
     status: "Entregado",
@@ -809,6 +839,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "UV890MN",
     origin: "Salta",
     destination: "San Miguel de Tucumán",
+    routeStops: ["Salta", "San Miguel de Tucumán"],
     routePath: initialRouteTemplates[3].path,
     progress: 10,
     status: "Aceptado",
@@ -827,6 +858,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "RS320AA",
     origin: "Ciudad de Córdoba",
     destination: "Villa María",
+    routeStops: ["Ciudad de Córdoba", "Villa María"],
     routePath: initialRouteTemplates[4].path,
     progress: 0,
     status: "Pendiente",
@@ -846,6 +878,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "VC227BB",
     origin: "Buenos Aires",
     destination: "Zárate",
+    routeStops: ["Buenos Aires", "Zárate"],
     routePath: initialRouteTemplates[5].path,
     progress: 0,
     status: "Asignado",
@@ -864,6 +897,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "Sin asignar",
     origin: "Buenos Aires",
     destination: "La Plata",
+    routeStops: ["Buenos Aires", "La Plata"],
     routePath: initialRouteTemplates[0].path,
     progress: 5,
     status: "Sin chofer",
@@ -882,6 +916,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "XY456EF",
     origin: "Santa Fe",
     destination: "Rafaela",
+    routeStops: ["Santa Fe", "Rafaela"],
     routePath: initialRouteTemplates[1].path,
     progress: 42,
     status: "En ruta",
@@ -901,6 +936,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "MN789GH",
     origin: "Mendoza",
     destination: "San Juan",
+    routeStops: ["Mendoza", "San Juan"],
     routePath: initialRouteTemplates[2].path,
     progress: 0,
     status: "Asignado",
@@ -919,6 +955,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "UV890MN",
     origin: "Salta",
     destination: "San Miguel de Tucumán",
+    routeStops: ["Salta", "San Miguel de Tucumán"],
     routePath: initialRouteTemplates[3].path,
     progress: 33,
     status: "En planta",
@@ -937,6 +974,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "RS320AA",
     origin: "Ciudad de Córdoba",
     destination: "Villa María",
+    routeStops: ["Ciudad de Córdoba", "Villa María"],
     routePath: initialRouteTemplates[4].path,
     progress: 61,
     status: "Cancelado",
@@ -955,6 +993,7 @@ const initialTrips: PlannedTrip[] = [
     vehiclePlate: "VC227BB",
     origin: "Buenos Aires",
     destination: "Zárate",
+    routeStops: ["Buenos Aires", "Zárate"],
     routePath: initialRouteTemplates[5].path,
     progress: 0,
     status: "Pendiente",
@@ -1248,27 +1287,14 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
       invoices,
       expirationRules,
       addTrip: (input) => {
-        const driver = users.find((item) => item.id === input.driverId && item.role === "Chofer");
-        const vehicle = vehicles.find((item) => item.id === input.vehicleId);
-        let route = input.routeId ? routeTemplatesState.find((item) => item.id === input.routeId) : undefined;
-        if (!route && input.manualRoute) {
-          const origin = input.manualRoute.origin.trim();
-          const destination = input.manualRoute.destination.trim();
-          const path = input.manualRoute.path.filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
-          if (origin && destination && path.length >= 2) {
-            const sequence = routeTemplatesState.length + 1;
-            route = {
-              id: `RT-CUSTOM-${String(sequence).padStart(3, "0")}`,
-              zoneId: input.zoneId,
-              label: `${origin} -> ${destination}`,
-              origin,
-              destination,
-              path,
-            };
-            setRouteTemplatesState((prev) => [route as RouteTemplate, ...prev]);
-          }
-        }
-        if (!driver || !vehicle || !route) return null;
+        const stops = input.routeStops.map((s) => String(s).trim()).filter(Boolean);
+        if (stops.length < 2) return null;
+
+        const driver = input.driverId ? users.find((item) => item.id === input.driverId && item.role === "Chofer") : undefined;
+        const vehicle = input.vehicleId ? vehicles.find((item) => item.id === input.vehicleId) : undefined;
+        if ((input.driverId && !driver) || (input.vehicleId && !vehicle)) return null;
+        const hasAssignment = Boolean(driver && vehicle);
+        if ((driver && !vehicle) || (!driver && vehicle)) return null;
         if (!input.cargo.trim() || !input.plan.trim()) return null;
 
         const clientCompany = input.clientCompany.trim();
@@ -1276,6 +1302,41 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
 
         const zoneExists = zonesState.some((zone) => zone.id === input.zoneId);
         if (!zoneExists) return null;
+
+        const manualPathRaw = input.manualRoute?.path?.filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1])) ?? [];
+        const hasManualPath = manualPathRaw.length >= 2;
+        const template = input.routeId ? routeTemplatesState.find((item) => item.id === input.routeId) : undefined;
+        const templatePathFiltered =
+          template?.path?.filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1])) ?? [];
+        const templatePath = templatePathFiltered.length >= 2 ? (templatePathFiltered as LatLngExpression[]) : null;
+
+        let basePath: LatLngExpression[] | null = null;
+        if (hasManualPath) {
+          basePath = manualPathRaw as LatLngExpression[];
+          if (!input.routeId) {
+            const sequenceTpl = routeTemplatesState.length + 1;
+            const o = stops[0];
+            const d = stops[stops.length - 1];
+            const nr: RouteTemplate = {
+              id: `RT-CUSTOM-${String(sequenceTpl).padStart(3, "0")}`,
+              zoneId: input.zoneId,
+              label: `${o} -> ${d}`,
+              origin: o,
+              destination: d,
+              path: basePath,
+            };
+            setRouteTemplatesState((prev) => [nr, ...prev]);
+          }
+        } else if (templatePath) {
+          basePath = templatePath;
+        }
+
+        if (!basePath || basePath.length < 2) return null;
+
+        const routePath = buildPathForStopCount(basePath, stops.length);
+        const origin = stops[0];
+        const destination = stops[stops.length - 1];
+
         const sequence = 1000 + trips.length + 1;
         const manualRemito = input.remitoNumber?.trim() ?? "";
         let remitoNumber: string;
@@ -1288,14 +1349,15 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         const newTrip: PlannedTrip = {
           id: `VJ-${sequence}`,
           zoneId: input.zoneId,
-          driverId: driver.id,
-          driver: driver.name,
-          vehiclePlate: vehicle.plate,
-          origin: route.origin,
-          destination: route.destination,
-          routePath: route.path,
+          driverId: hasAssignment ? driver?.id : undefined,
+          driver: hasAssignment ? (driver?.name ?? "Sin asignar") : "Sin asignar",
+          vehiclePlate: hasAssignment ? (vehicle?.plate ?? "Sin asignar") : "Sin asignar",
+          origin,
+          destination,
+          routeStops: stops,
+          routePath,
           progress: 0,
-          status: "Asignado",
+          status: hasAssignment ? "Asignado" : "Sin chofer",
           cargo: input.cargo.trim(),
           plan: input.plan.trim(),
           scheduledAt: input.scheduledAt || new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
@@ -1306,7 +1368,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         };
         updateTrips((prev) => [newTrip, ...prev]);
         toast.message(`Viaje ${newTrip.id} creado`, {
-          description: "Esperando aceptación del chofer...",
+          description: hasAssignment ? "Esperando aceptación del chofer..." : "Viaje creado sin chofer. Podés asignarlo al editar.",
         });
         return newTrip;
       },
@@ -1319,11 +1381,12 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
 
         const trimmedDriver = input.driver.trim();
         const trimmedPlate = input.vehiclePlate.trim().toUpperCase();
-        const origin = input.origin.trim();
-        const destination = input.destination.trim();
+        const stops = input.routeStops.map((s) => String(s).trim()).filter(Boolean);
         const cargo = input.cargo.trim();
         const plan = input.plan.trim();
-        if (!origin || !destination || !cargo || !plan) return null;
+        if (stops.length < 2 || !cargo || !plan) return null;
+        const origin = stops[0];
+        const destination = stops[stops.length - 1];
 
         const zoneExists = zonesState.some((zone) => zone.id === input.zoneId);
         if (!zoneExists) return null;
@@ -1342,6 +1405,11 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           input.status === "Sin chofer" ? "Sin asignar" : trimmedPlate || "Patente N/D";
         const resolvedDriverId = users.find((u) => u.role === "Chofer" && u.name === normalizedDriver)?.id;
 
+        let routePath = target.routePath;
+        if (stops.length >= 2 && target.routePath.length >= 2) {
+          routePath = buildPathForStopCount(target.routePath, stops.length);
+        }
+
         const updatedTrip: PlannedTrip = {
           ...target,
           zoneId: input.zoneId,
@@ -1350,6 +1418,8 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           vehiclePlate: normalizedVehicle,
           origin,
           destination,
+          routeStops: stops,
+          routePath,
           cargo,
           plan,
           scheduledAt: input.scheduledAt || target.scheduledAt,

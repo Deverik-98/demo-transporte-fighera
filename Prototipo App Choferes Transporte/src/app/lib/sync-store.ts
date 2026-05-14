@@ -28,6 +28,8 @@ export type SyncTrip = {
   scheduledAt: string;
   clientCompany?: string;
   remitoNumber?: string;
+  /** Paradas en orden (primera = origen, última = destino). */
+  routeStops?: string[];
   timeline?: Array<{ timestamp: string; descripcion: string }>;
   evidencias?: Array<{
     id: string;

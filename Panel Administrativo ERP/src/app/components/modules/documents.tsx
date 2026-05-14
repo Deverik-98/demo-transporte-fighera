@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Textarea } from "../ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useOperationsData, DocumentEntityType, TripDocumentType } from "../../lib/operations-data";
+import { formatTripRouteStops } from "../../lib/trip-route";
 import { FileText, Pencil, Plus, Trash2, Upload, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
@@ -86,7 +87,7 @@ export function DocumentsModule({ focusTripId, onFocusTripConsumed }: DocumentsM
           tripId: trip.id,
           docId: doc.id,
           driver: trip.driver,
-          route: `${trip.origin} → ${trip.destination}`,
+          route: formatTripRouteStops(trip.routeStops, trip.origin, trip.destination),
           status: trip.status,
           type: (doc.type ?? doc.tipo ?? "Otro") as TripDocumentType,
           name: doc.name ?? doc.nombre ?? "documento",

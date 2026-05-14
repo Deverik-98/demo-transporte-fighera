@@ -20,6 +20,8 @@ export type SyncTrip = {
   vehiclePlate: string;
   origin: string;
   destination: string;
+  /** Paradas en orden (primera = origen, última = destino). Opcional en datos legacy. */
+  routeStops?: string[];
   routePath: LatLngExpression[];
   progress: number;
   status: SyncTripStatus;

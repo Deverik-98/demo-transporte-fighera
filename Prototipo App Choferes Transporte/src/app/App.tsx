@@ -37,6 +37,7 @@ import 'leaflet/dist/leaflet.css';
 import { toast } from 'sonner';
 import { TripStage, TripStageStepper } from './components/modules/TripStageStepper';
 import { appendCriticalAlert, getSyncDocuments, getSyncTrips, getSyncUsers, getSyncVehicles, requestGlobalDemoReset, setSyncTrips, SyncTrip } from './lib/sync-store';
+import { formatTripRouteStops } from './lib/trip-route';
 
 type TripStatus = 'asignado' | 'aceptado' | 'en-planta' | 'en-ruta' | 'completado' | 'cancelado';
 type Screen = 'ruta' | 'historial' | 'rrhh' | 'perfil';
@@ -76,6 +77,8 @@ interface Trip {
   fechaProgramada: string;
   origen: string;
   destino: string;
+  /** Paradas en orden (sincronizado con panel). */
+  routeStops?: string[];
   carga: string;
   distancia: string;
   eta: string;
@@ -197,6 +200,8 @@ function normalizeTripDocs(tripId: string, raw: unknown) {
 }
 
 function mapTripToSync(trip: Trip): SyncTrip {
+  const routeStops =
+    trip.routeStops && trip.routeStops.length >= 2 ? trip.routeStops : [trip.origen, trip.destino].filter(Boolean);
   return {
     id: trip.id,
     zoneId: trip.zoneId,
@@ -205,6 +210,7 @@ function mapTripToSync(trip: Trip): SyncTrip {
     vehiclePlate: trip.vehiclePlate,
     origin: trip.origen,
     destination: trip.destino,
+    routeStops,
     routePath: trip.routePath,
     progress: trip.progress,
     status:
@@ -229,6 +235,12 @@ function mapTripToSync(trip: Trip): SyncTrip {
 
 function mapSyncToMobileTrip(syncTrip: SyncTrip): Trip {
   const normalizedStatus = normalizeIncomingSyncStatus(syncTrip.status as unknown as string);
+  const stops =
+    syncTrip.routeStops && syncTrip.routeStops.length >= 2
+      ? syncTrip.routeStops.map((s) => String(s).trim()).filter(Boolean)
+      : [syncTrip.origin, syncTrip.destination].filter(Boolean);
+  const origen = stops[0] ?? syncTrip.origin;
+  const destino = stops[stops.length - 1] ?? syncTrip.destination;
   return {
     id: syncTrip.id,
     driverId: syncTrip.driverId,
@@ -237,8 +249,9 @@ function mapSyncToMobileTrip(syncTrip: SyncTrip): Trip {
     stage: normalizedStatus === 'En ruta' ? 'en-ruta' : normalizedStatus === 'Entregado' ? 'llegada' : 'aceptado',
     vehiclePlate: syncTrip.vehiclePlate,
     fechaProgramada: syncTrip.scheduledAt,
-    origen: syncTrip.origin,
-    destino: syncTrip.destination,
+    origen,
+    destino,
+    routeStops: stops.length >= 2 ? stops : undefined,
     carga: syncTrip.cargo,
     distancia: `${Math.max(50, Math.round((syncTrip.routePath.length || 2) * 90))} km`,
     eta: "3h 30m",
@@ -480,7 +493,7 @@ export default function App() {
         .map((trip) => ({
           id: trip.id,
           fecha: trip.fechaProgramada,
-          ruta: `${trip.origen} → ${trip.destino}`,
+          ruta: formatTripRouteStops(trip.routeStops, trip.origen, trip.destino),
           estado: trip.estado === 'completado' ? 'Completado' : 'Cancelado'
         })),
     [currentDriverId, currentDriverName, trips]
@@ -659,7 +672,7 @@ export default function App() {
     if (newTrips.length) {
       newTrips.forEach((trip) => {
         toast.info(`Nuevo viaje asignado: ${trip.id}`, {
-          description: `${trip.origen} -> ${trip.destino} · Camión ${trip.vehiclePlate}`
+          description: `${formatTripRouteStops(trip.routeStops, trip.origen, trip.destino)} · Camión ${trip.vehiclePlate}`
         });
       });
     }
@@ -1283,8 +1296,7 @@ export default function App() {
                         <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="px-4 pb-4">
                           <div className="text-sm text-gray-700 space-y-2 mb-4">
                             <p><span className="font-semibold">Camión:</span> {trip.vehiclePlate}</p>
-                            <p><span className="font-semibold">Origen:</span> {trip.origen}</p>
-                            <p><span className="font-semibold">Destino:</span> {trip.destino}</p>
+                            <p><span className="font-semibold">Ruta:</span> {formatTripRouteStops(trip.routeStops, trip.origen, trip.destino)}</p>
                             <p><span className="font-semibold">Carga:</span> {trip.carga}</p>
                             <p><span className="font-semibold">Distancia:</span> {trip.distancia} · ETA {trip.eta}</p>
                             <p><span className="font-semibold">Plan:</span> {trip.plan}</p>
@@ -1343,7 +1355,7 @@ export default function App() {
                         </span>
                       </div>
                       <p className="text-sm text-slate-700 mt-3">
-                        {activeTrip.origen} <span className="text-slate-400">→</span> {activeTrip.destino}
+                        {formatTripRouteStops(activeTrip.routeStops, activeTrip.origen, activeTrip.destino)}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
                         {activeTrip.distancia} · ETA {activeTrip.eta} · Progreso {Math.round(activeTrip.progress)}%
@@ -1511,7 +1523,7 @@ export default function App() {
                           >
                             <div>
                               <div className="font-semibold text-gray-800">{trip.id}</div>
-                              <div className="text-sm text-gray-600">{trip.origen} → {trip.destino}</div>
+                              <div className="text-sm text-gray-600">{formatTripRouteStops(trip.routeStops, trip.origen, trip.destino)}</div>
                               <div className="text-xs text-gray-500 mt-1">📅 {trip.fechaProgramada} · 🚚 {trip.vehiclePlate}</div>
                             </div>
                             <div className="flex items-center gap-2">

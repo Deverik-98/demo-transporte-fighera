@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../ui/dialog";
 import { Input } from "../ui/input";
@@ -7,12 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Textarea } from "../ui/textarea";
 import { useOperationsData, ZoneId } from "../../lib/operations-data";
 import { PRINCIPAL_CLIENT_COMPANIES, isPrincipalClientCompany } from "../../lib/trip-clients";
-import { CalendarClock, MapPinned, Plus } from "lucide-react";
+import { CalendarClock, Plus } from "lucide-react";
 import { toast } from "sonner";
 import L from "leaflet";
-import { MapContainer, Marker, Polyline, TileLayer, useMapEvents } from "react-leaflet";
+import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { buildPathForStopCount } from "../../lib/trip-route";
 
 /** Evita sprites rotos del ícono por defecto en Vite (markers con DivIcon claros). */
 const tripManualOriginIcon = L.divIcon({
@@ -29,6 +30,14 @@ const tripManualDestIcon = L.divIcon({
     '<div style="display:flex;width:28px;height:28px;margin:-14px -14px;align-items:center;justify-content:center"><span style="width:18px;height:18px;background:#059669;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.4)"><span></span></span></div>',
   iconSize: [28, 28],
   iconAnchor: [14, 14],
+});
+
+const tripManualMidIcon = L.divIcon({
+  className: "!border-0 !bg-transparent focus:outline-none",
+  html:
+    '<div style="display:flex;width:22px;height:22px;margin:-11px -11px;align-items:center;justify-content:center"><span style="width:10px;height:10px;background:#111827;border-radius:999px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35)"></span></div>',
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
 });
 
 const PLACE_TYPE_PHOTON_SCORE: Record<string, number> = {
@@ -50,11 +59,6 @@ function sanitizeJsonSnippet(text: string) {
   } catch {
     return null;
   }
-}
-
-function isSettledPlaceLabel(value: string) {
-  const t = value.trim();
-  return Boolean(t && t !== "Localizando…" && !t.startsWith("Localizando"));
 }
 
 function pickPhotonReverseLabel(fc: { features?: Array<{ properties?: Record<string, unknown> }> }) {
@@ -119,6 +123,54 @@ async function reverseGeocodePlaceName(lat: number, lng: number): Promise<string
   return "Ubicación en mapa";
 }
 
+async function geocodePlaceName(query: string): Promise<[number, number] | null> {
+  const q = query.trim();
+  if (!q) return null;
+  try {
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(`${q}, Argentina`)}&limit=1`);
+    if (!r.ok) throw new Error("photon-search");
+    const raw = await r.text();
+    const j = sanitizeJsonSnippet(raw) as { features?: Array<{ geometry?: { coordinates?: [number, number] } }> };
+    const coords = j?.features?.[0]?.geometry?.coordinates;
+    if (!coords || !Number.isFinite(coords[0]) || !Number.isFinite(coords[1])) return null;
+    return [coords[1], coords[0]];
+  } catch {
+    return null;
+  }
+}
+
+async function fetchRoadPolyline(points: [number, number][]): Promise<LatLngExpression[]> {
+  if (points.length < 2) return points;
+  try {
+    const coords = points.map(([lat, lng]) => `${lng},${lat}`).join(";");
+    const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("osrm");
+    const j = (await r.json()) as {
+      routes?: Array<{ geometry?: { coordinates?: Array<[number, number]> } }>;
+    };
+    const line = j.routes?.[0]?.geometry?.coordinates ?? [];
+    if (!line.length) throw new Error("osrm-empty");
+    return line.map(([lng, lat]) => [lat, lng]);
+  } catch {
+    return points;
+  }
+}
+
+function AutoFitMapBounds({ path }: { path: LatLngExpression[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!path.length) return;
+    if (path.length === 1) {
+      map.setView(path[0], 12, { animate: true });
+      return;
+    }
+    const bounds = L.latLngBounds(path as [number, number][]);
+    map.fitBounds(bounds, { padding: [26, 26], maxZoom: 11, animate: true });
+  }, [map, path]);
+  return null;
+}
+
 type TripAssignmentModalProps = {
   buttonLabel: string;
   onTripCreated?: (tripId: string, zoneId: ZoneId) => void;
@@ -126,13 +178,11 @@ type TripAssignmentModalProps = {
 };
 
 export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassName }: TripAssignmentModalProps) {
-  const { zones, drivers, vehicles, routeTemplates, trips, addTrip } = useOperationsData();
+  const { zones, routeTemplates, addTrip } = useOperationsData();
   const defaultZoneId = zones[0]?.id ?? "";
   const [isOpen, setIsOpen] = useState(false);
   const [assignmentForm, setAssignmentForm] = useState({
     zoneId: defaultZoneId as ZoneId,
-    driverId: "",
-    vehicleId: "",
     routeId: "",
     cargo: "",
     plan: "",
@@ -141,23 +191,24 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
     clientCompanyOther: "",
     remitoNumber: "",
   });
-  const [manualRouteOrigin, setManualRouteOrigin] = useState("");
-  const [manualRouteDestination, setManualRouteDestination] = useState("");
+  /** Paradas en orden: primera = origen, última = destino. */
+  const [stopLabels, setStopLabels] = useState<string[]>(["", ""]);
   const [manualOriginPoint, setManualOriginPoint] = useState<[number, number] | null>(null);
   const [manualDestinationPoint, setManualDestinationPoint] = useState<[number, number] | null>(null);
   const [mapSelectionTarget, setMapSelectionTarget] = useState<"origin" | "destination">("origin");
-  const [manualMapSectionOpen, setManualMapSectionOpen] = useState(false);
+  const [resolvedStopPoints, setResolvedStopPoints] = useState<[number, number][]>([]);
+  const [previewRoutePath, setPreviewRoutePath] = useState<LatLngExpression[]>([]);
+  const geocodeCacheRef = useRef<Map<string, [number, number] | null>>(new Map());
+  const routeResolveSeqRef = useRef(0);
 
   const mapSelRef = useRef(mapSelectionTarget);
   mapSelRef.current = mapSelectionTarget;
 
-  const filteredDrivers = drivers;
   useEffect(() => {
     if (!defaultZoneId) return;
     setAssignmentForm((prev) => (prev.zoneId ? prev : { ...prev, zoneId: defaultZoneId as ZoneId }));
   }, [defaultZoneId]);
 
-  const filteredVehicles = vehicles.filter((vehicle) => vehicle.type === "Camión");
   const filteredRoutes = routeTemplates.filter((route) => route.zoneId === assignmentForm.zoneId);
   const selectedZone = zones.find((zone) => zone.id === assignmentForm.zoneId);
   const resolvedClientPreview = useMemo(() => {
@@ -165,73 +216,125 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
     return assignmentForm.clientCompanyOther.trim();
   }, [assignmentForm.clientCompanySelect, assignmentForm.clientCompanyOther]);
   const requiresRemitoInput = isPrincipalClientCompany(resolvedClientPreview);
+  const shouldUseManualRoute = filteredRoutes.length === 0;
+  const selectedRouteTemplate = useMemo(
+    () => filteredRoutes.find((r) => r.id === assignmentForm.routeId),
+    [filteredRoutes, assignmentForm.routeId],
+  );
   const mapCenter = useMemo<LatLngExpression>(() => {
+    if (manualOriginPoint) return manualOriginPoint;
+    if (selectedRouteTemplate?.path?.length) return selectedRouteTemplate.path[0];
     const center = selectedZone?.mapCenter;
     if (!center || !Number.isFinite(center[0]) || !Number.isFinite(center[1])) {
       return [-34.6037, -58.3816];
     }
     return center;
-  }, [selectedZone]);
-  const shouldUseManualRoute = filteredRoutes.length === 0;
-  const mapSectionVisible = shouldUseManualRoute || manualMapSectionOpen;
-  const routingFromManualMapReady =
-    Boolean(
-      manualOriginPoint &&
-      manualDestinationPoint &&
-      isSettledPlaceLabel(manualRouteOrigin) &&
-      isSettledPlaceLabel(manualRouteDestination),
-    );
+  }, [manualOriginPoint, selectedRouteTemplate, selectedZone]);
+  const previewPath = useMemo<LatLngExpression[]>(() => {
+    if (previewRoutePath.length >= 2) return previewRoutePath;
+    const path = selectedRouteTemplate?.path ?? [];
+    if (!path.length) return [];
+    const totalStops = Math.max(2, stopLabels.length);
+    return buildPathForStopCount(path, totalStops);
+  }, [previewRoutePath, selectedRouteTemplate, stopLabels.length]);
+  const displayStopPoints = useMemo<LatLngExpression[]>(() => {
+    if (resolvedStopPoints.length >= 2) return resolvedStopPoints;
+    const path = selectedRouteTemplate?.path ?? [];
+    if (path.length >= 2) return buildPathForStopCount(path, Math.max(2, stopLabels.length));
+    return [];
+  }, [resolvedStopPoints, selectedRouteTemplate, stopLabels.length]);
+  const firstStopLabel = stopLabels[0] ?? "";
+  const lastStopLabel = stopLabels[stopLabels.length - 1] ?? "";
 
-  const firstDriverId = filteredDrivers[0]?.id ?? "";
-  const firstVehicleId = filteredVehicles[0]?.id ?? "";
   const firstRouteId = filteredRoutes[0]?.id ?? "";
-
-  const suggestVehicleForDriver = (driverId: string) => {
-    const selectedDriver = drivers.find((driver) => driver.id === driverId);
-    if (!selectedDriver) return "";
-    const lastTripWithVehicle = [...trips]
-      .reverse()
-      .find((trip) => trip.driver === selectedDriver.name && trip.vehiclePlate);
-    if (lastTripWithVehicle) {
-      const matchedVehicle = filteredVehicles.find((vehicle) => vehicle.plate === lastTripWithVehicle.vehiclePlate);
-      if (matchedVehicle) return matchedVehicle.id;
-    }
-    return filteredVehicles[0]?.id ?? "";
-  };
 
   useEffect(() => {
     setManualOriginPoint(null);
     setManualDestinationPoint(null);
-    setManualRouteOrigin("");
-    setManualRouteDestination("");
     setMapSelectionTarget("origin");
-    setManualMapSectionOpen(false);
   }, [assignmentForm.zoneId]);
+
+  useEffect(() => {
+    if (shouldUseManualRoute) {
+      setStopLabels(["", ""]);
+    }
+  }, [shouldUseManualRoute, assignmentForm.zoneId]);
+
+  useEffect(() => {
+    if (shouldUseManualRoute) return;
+    const rt = routeTemplates.find((r) => r.id === assignmentForm.routeId && r.zoneId === assignmentForm.zoneId);
+    if (rt) {
+      setStopLabels([rt.origin, rt.destination]);
+      setManualOriginPoint(null);
+      setManualDestinationPoint(null);
+      setMapSelectionTarget("origin");
+    }
+  }, [assignmentForm.routeId, assignmentForm.zoneId, shouldUseManualRoute, routeTemplates]);
+
+  useEffect(() => {
+    const labels = stopLabels.map((s) => s.trim());
+    if (labels.length < 2 || labels.some((s) => !s)) {
+      setResolvedStopPoints([]);
+      setPreviewRoutePath([]);
+      return;
+    }
+    const currentSeq = ++routeResolveSeqRef.current;
+    const timer = window.setTimeout(async () => {
+      const coords: [number, number][] = [];
+      for (let i = 0; i < labels.length; i++) {
+        const key = labels[i].toLowerCase();
+        if (i === 0 && manualOriginPoint) {
+          coords.push(manualOriginPoint);
+          geocodeCacheRef.current.set(key, manualOriginPoint);
+          continue;
+        }
+        if (i === labels.length - 1 && manualDestinationPoint) {
+          coords.push(manualDestinationPoint);
+          geocodeCacheRef.current.set(key, manualDestinationPoint);
+          continue;
+        }
+        const cached = geocodeCacheRef.current.get(key);
+        if (cached) {
+          coords.push(cached);
+          continue;
+        }
+        const geo = await geocodePlaceName(labels[i]);
+        geocodeCacheRef.current.set(key, geo);
+        if (!geo) continue;
+        coords.push(geo);
+      }
+      if (currentSeq !== routeResolveSeqRef.current) return;
+      if (coords.length < 2) {
+        setResolvedStopPoints([]);
+        setPreviewRoutePath([]);
+        return;
+      }
+      setResolvedStopPoints(coords);
+      const roadPath = await fetchRoadPolyline(coords);
+      if (currentSeq !== routeResolveSeqRef.current) return;
+      setPreviewRoutePath(roadPath.length >= 2 ? roadPath : coords);
+    }, 360);
+    return () => window.clearTimeout(timer);
+  }, [stopLabels, manualOriginPoint, manualDestinationPoint]);
 
   useEffect(() => {
     if (!isOpen) return;
     setAssignmentForm((prev) => ({
       ...prev,
-      driverId: prev.driverId || firstDriverId,
-      vehicleId: prev.vehicleId || (prev.driverId ? suggestVehicleForDriver(prev.driverId) : firstVehicleId),
       routeId: shouldUseManualRoute ? "" : prev.routeId || firstRouteId,
       scheduledAt: prev.scheduledAt || new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
     }));
-  }, [isOpen, firstDriverId, firstVehicleId, firstRouteId, shouldUseManualRoute]);
+  }, [isOpen, firstRouteId, shouldUseManualRoute]);
 
   function handleDialogOpenChange(open: boolean) {
     setIsOpen(open);
     if (!open) {
-      setManualMapSectionOpen(false);
       setManualOriginPoint(null);
       setManualDestinationPoint(null);
-      setManualRouteOrigin("");
-      setManualRouteDestination("");
+      setStopLabels(["", ""]);
       setMapSelectionTarget("origin");
       setAssignmentForm({
         zoneId: (zones[0]?.id ?? "") as ZoneId,
-        driverId: "",
-        vehicleId: "",
         routeId: "",
         cargo: "",
         plan: "",
@@ -247,14 +350,36 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
     const target = mapSelRef.current;
     if (target === "origin") {
       setManualOriginPoint(point);
-      setManualRouteOrigin("Localizando…");
       setMapSelectionTarget("destination");
-      reverseGeocodePlaceName(point[0], point[1]).then((name) => setManualRouteOrigin(name));
+      setStopLabels((prev) => {
+        const next = [...prev];
+        if (!next.length) return ["Localizando…", ""];
+        next[0] = "Localizando…";
+        return next;
+      });
+      reverseGeocodePlaceName(point[0], point[1]).then((name) =>
+        setStopLabels((prev) => {
+          const n = [...prev];
+          if (n.length) n[0] = name;
+          return n;
+        }),
+      );
       return;
     }
     setManualDestinationPoint(point);
-    setManualRouteDestination("Localizando…");
-    reverseGeocodePlaceName(point[0], point[1]).then((name) => setManualRouteDestination(name));
+    setStopLabels((prev) => {
+      const next = [...prev];
+      if (next.length < 2) return [...next, "Localizando…"];
+      next[next.length - 1] = "Localizando…";
+      return next;
+    });
+    reverseGeocodePlaceName(point[0], point[1]).then((name) =>
+      setStopLabels((prev) => {
+        const n = [...prev];
+        if (n.length >= 2) n[n.length - 1] = name;
+        return n;
+      }),
+    );
   }, []);
 
   function ManualRouteMapEvents() {
@@ -268,15 +393,8 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
 
   function submitAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const resolvedDriverId = assignmentForm.driverId || filteredDrivers[0]?.id || "";
-    const resolvedVehicleId = assignmentForm.vehicleId || suggestVehicleForDriver(resolvedDriverId) || filteredVehicles[0]?.id || "";
     const resolvedRouteId = assignmentForm.routeId || filteredRoutes[0]?.id || "";
     const resolvedScheduledAt = assignmentForm.scheduledAt || new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16);
-
-    if (!resolvedDriverId || !resolvedVehicleId) {
-      toast.error("Debe existir al menos un chofer y un camión para asignar el viaje.");
-      return;
-    }
     if (!assignmentForm.cargo.trim() || !assignmentForm.plan.trim()) {
       toast.error("Completá tipo de carga y condiciones de viaje para continuar.");
       return;
@@ -295,34 +413,32 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       return;
     }
 
-    const manualPath = manualOriginPoint && manualDestinationPoint ? [manualOriginPoint, manualDestinationPoint] : [];
-    const useManualFromMap = shouldUseManualRoute || routingFromManualMapReady;
+    const trimmedStops = stopLabels.map((s) => s.trim());
+    if (trimmedStops.length < 2 || trimmedStops.some((s) => !s)) {
+      toast.error("Completá el nombre de cada parada.");
+      return;
+    }
 
-    if (shouldUseManualRoute && !routingFromManualMapReady) {
-      toast.error("Define origen, destino y ambos puntos en el mapa para la ruta manual.");
+    const generatedPath = previewPath.filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+    const canUseGeneratedPath = generatedPath.length >= 2;
+    const useGeneratedManualRoute =
+      canUseGeneratedPath &&
+      (shouldUseManualRoute || stopLabels.length > 2 || Boolean(manualOriginPoint) || Boolean(manualDestinationPoint));
+
+    if (shouldUseManualRoute && !canUseGeneratedPath) {
+      toast.error("Definí una ruta válida en el mapa o con paradas ubicables.");
       return;
     }
-    if (!shouldUseManualRoute && !routingFromManualMapReady && !resolvedRouteId) {
-      toast.error("Seleccioná una ruta o definí origen y destino en el mapa.");
-      return;
-    }
-    if (useManualFromMap && (!isSettledPlaceLabel(manualRouteOrigin) || !isSettledPlaceLabel(manualRouteDestination) || manualPath.length < 2)) {
-      toast.error("Completá origen y destino en el mapa y esperá el nombre del lugar (o escribilo a mano).");
+    if (!shouldUseManualRoute && !useGeneratedManualRoute && !resolvedRouteId) {
+      toast.error("Elegí una ruta o usá el mapa.");
       return;
     }
 
     const trip = addTrip({
       zoneId: assignmentForm.zoneId,
-      driverId: resolvedDriverId,
-      vehicleId: resolvedVehicleId,
-      routeId: useManualFromMap ? undefined : resolvedRouteId,
-      manualRoute: useManualFromMap
-        ? {
-            origin: manualRouteOrigin.trim(),
-            destination: manualRouteDestination.trim(),
-            path: manualPath,
-          }
-        : undefined,
+      routeId: useGeneratedManualRoute ? undefined : resolvedRouteId,
+      routeStops: trimmedStops,
+      manualRoute: useGeneratedManualRoute ? { path: generatedPath as [number, number][] } : undefined,
       cargo: assignmentForm.cargo,
       plan: assignmentForm.plan,
       scheduledAt: resolvedScheduledAt,
@@ -337,8 +453,6 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
     handleDialogOpenChange(false);
     setAssignmentForm((prev) => ({
       zoneId: prev.zoneId,
-      driverId: resolvedDriverId,
-      vehicleId: resolvedVehicleId,
       routeId: shouldUseManualRoute ? "" : resolvedRouteId,
       cargo: "",
       plan: "",
@@ -352,11 +466,15 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
   const clearManualMap = () => {
     setManualOriginPoint(null);
     setManualDestinationPoint(null);
-    setManualRouteOrigin("");
-    setManualRouteDestination("");
     setMapSelectionTarget("origin");
     if (!shouldUseManualRoute) {
-      toast.message("Marcadores del mapa limpiados.", { description: "Se usa la ruta elegida del desplegable." });
+      const rt = routeTemplates.find((r) => r.id === assignmentForm.routeId && r.zoneId === assignmentForm.zoneId);
+      if (rt) setStopLabels([rt.origin, rt.destination]);
+    }
+    if (shouldUseManualRoute) {
+      toast.message("Mapa limpiado.", { description: "Volvé a marcar origen y destino." });
+    } else {
+      toast.message("Puntos del mapa borrados.", { description: "Se mantiene la plantilla del listado." });
     }
   };
 
@@ -375,180 +493,186 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       >
         <DialogHeader>
           <DialogTitle>Nueva programación de viaje</DialogTitle>
-          <DialogDescription>Completa la asignación para gestionar el viaje desde el panel y monitor.</DialogDescription>
+          <DialogDescription className="text-sm">Elegí zona, definí ruta y guardá. Podés asignar chofer/camión luego.</DialogDescription>
         </DialogHeader>
-        <form className="flex flex-col gap-6" onSubmit={submitAssignment}>
-          <section aria-labelledby="trip-assign-resources" className="space-y-3">
-            <h3 id="trip-assign-resources" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Zona y equipo
-            </h3>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="space-y-2">
-                <Label>Zona</Label>
-                <Select
-                  value={assignmentForm.zoneId}
-                  onValueChange={(value: ZoneId) =>
-                    setAssignmentForm({
-                      zoneId: value,
-                      driverId: assignmentForm.driverId || drivers[0]?.id || "",
-                      vehicleId: assignmentForm.driverId ? suggestVehicleForDriver(assignmentForm.driverId) : filteredVehicles[0]?.id ?? "",
-                      routeId: routeTemplates.find((route) => route.zoneId === value)?.id ?? "",
-                      cargo: "",
-                      plan: "",
-                      scheduledAt: new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
-                      clientCompanySelect: "SIDERSA",
-                      clientCompanyOther: "",
-                      remitoNumber: "",
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Seleccionar zona" /></SelectTrigger>
-                  <SelectContent className="z-[1700]">
-                    {zones.map((zone) => (
-                      <SelectItem key={zone.id} value={zone.id}>{zone.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Chofer</Label>
-                <Select
-                  value={assignmentForm.driverId}
-                  onValueChange={(value) =>
-                    setAssignmentForm((prev) => ({
-                      ...prev,
-                      driverId: value,
-                      vehicleId: suggestVehicleForDriver(value) || prev.vehicleId,
-                    }))
-                  }
-                >
-                  <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Seleccionar chofer" /></SelectTrigger>
-                  <SelectContent className="z-[1700]">
-                    {filteredDrivers.map((driver) => <SelectItem key={driver.id} value={driver.id}>{driver.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2 sm:col-span-2 lg:col-span-1">
-                <Label>Camión</Label>
-                <Select value={assignmentForm.vehicleId} onValueChange={(value) => setAssignmentForm((prev) => ({ ...prev, vehicleId: value }))}>
-                  <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Seleccionar camión" /></SelectTrigger>
-                  <SelectContent className="z-[1700]">
-                    {filteredVehicles.map((vehicle) => <SelectItem key={vehicle.id} value={vehicle.id}>{vehicle.plate}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </section>
+        <form className="flex flex-col gap-5" onSubmit={submitAssignment}>
+          <div className="w-full space-y-2">
+            <Label htmlFor="trip-zone-select" className="block text-sm font-medium leading-snug text-foreground">
+              Selecciona la zona a la que deseas establecer el viaje
+            </Label>
+            <Select
+              value={assignmentForm.zoneId}
+              onValueChange={(value: ZoneId) =>
+                setAssignmentForm({
+                  zoneId: value,
+                  routeId: routeTemplates.find((route) => route.zoneId === value)?.id ?? "",
+                  cargo: "",
+                  plan: "",
+                  scheduledAt: new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
+                  clientCompanySelect: "SIDERSA",
+                  clientCompanyOther: "",
+                  remitoNumber: "",
+                })
+              }
+            >
+              <SelectTrigger id="trip-zone-select" className="h-11 w-full">
+                <SelectValue placeholder="Elegí una zona" />
+              </SelectTrigger>
+              <SelectContent className="z-[1700]">
+                {zones.map((zone) => (
+                  <SelectItem key={zone.id} value={zone.id}>
+                    {zone.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-          <section aria-labelledby="trip-assign-route" className="rounded-lg border border-border/80 bg-muted/20 p-4 shadow-sm">
-            <h3 id="trip-assign-route" className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Ruta origen–destino
-            </h3>
-            <div className="space-y-2">
-              <Label htmlFor="trip-route-select" className="text-foreground">
-                {shouldUseManualRoute ? "Sin plantillas en esta zona" : "Plantilla de ruta"}
-              </Label>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="min-w-0 flex-1">
-                  {shouldUseManualRoute ? (
-                    <p
-                      id="trip-route-select"
-                      className="flex min-h-10 items-center rounded-md border border-dashed border-muted-foreground/35 bg-background/80 px-3 py-2 text-sm leading-snug text-muted-foreground"
-                    >
-                      Esta zona no tiene rutas definidas. Usá el mapa para marcar origen y destino.
-                    </p>
-                  ) : (
-                    <Select value={assignmentForm.routeId} onValueChange={(value) => setAssignmentForm((prev) => ({ ...prev, routeId: value }))}>
-                      <SelectTrigger id="trip-route-select" className="h-10 w-full">
-                        <SelectValue placeholder="Seleccionar ruta" />
-                      </SelectTrigger>
-                      <SelectContent className="z-[1700]">
-                        {filteredRoutes.map((route) => (
-                          <SelectItem key={route.id} value={route.id}>{route.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  size="lg"
-                  variant={mapSectionVisible && !shouldUseManualRoute ? "secondary" : "outline"}
-                  className="w-full shrink-0 sm:w-auto sm:min-w-[9.5rem]"
-                  title="Abrir mapa para elegir origen y destino"
-                  onClick={() => {
-                    setManualMapSectionOpen((v) => !v);
-                    if (!manualMapSectionOpen) setMapSelectionTarget("origin");
-                  }}
-                >
-                  <MapPinned className="mr-2 h-4 w-4 shrink-0" />
-                  <span className="truncate">{mapSectionVisible && !shouldUseManualRoute ? "Ocultar mapa" : "Mapa"}</span>
-                </Button>
-              </div>
-            </div>
-          </section>
-
-          {mapSectionVisible ? (
-            <section aria-label="Selección en mapa" className="space-y-3 rounded-lg border border-border/60 bg-background p-4 shadow-sm">
-              {!shouldUseManualRoute ? (
-                <p className="text-xs text-muted-foreground">
-                  Opcional: si marcás origen y destino en el mapa, se usa esa traza en lugar de la plantilla de la ruta seleccionada.
-                </p>
-              ) : null}
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Origen</Label>
-                  <Input placeholder="Ej: Mendoza" value={manualRouteOrigin} onChange={(event) => setManualRouteOrigin(event.target.value)} required={shouldUseManualRoute || routingFromManualMapReady} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Destino</Label>
-                  <Input placeholder="Ej: Córdoba" value={manualRouteDestination} onChange={(event) => setManualRouteDestination(event.target.value)} required={shouldUseManualRoute || routingFromManualMapReady} />
-                </div>
-              </div>
+          <section aria-label="Ruta" className="rounded-xl border border-border/80 bg-muted/15 p-4 space-y-4">
+            <div className="space-y-2 rounded-lg border border-border/60 bg-background p-3">
               <div className="overflow-hidden rounded-lg border [&_.leaflet-container]:z-[0] [&_.leaflet-pane]:isolate">
-                <MapContainer center={mapCenter} zoom={selectedZone?.zoom ?? 6} className="h-64 w-full" scrollWheelZoom>
+                <MapContainer center={mapCenter} zoom={selectedZone?.zoom ?? 6} className="h-48 w-full" scrollWheelZoom>
                   <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
                     url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
                   />
+                  <AutoFitMapBounds path={previewPath} />
                   <ManualRouteMapEvents />
-                  {manualOriginPoint ? (
-                    <Marker position={manualOriginPoint} icon={tripManualOriginIcon} />
+                  {previewPath.length >= 2 ? (
+                    <Polyline positions={previewPath} pathOptions={{ color: "#2563eb", weight: 4 }} />
                   ) : null}
-                  {manualDestinationPoint ? (
-                    <Marker position={manualDestinationPoint} icon={tripManualDestIcon} />
-                  ) : null}
-                  {manualOriginPoint && manualDestinationPoint ? (
-                    <Polyline positions={[manualOriginPoint, manualDestinationPoint]} pathOptions={{ color: "#2563eb", weight: 4 }} />
-                  ) : null}
+                  {displayStopPoints.map((point, idx) => (
+                    <Marker
+                      key={`preview-stop-${idx}`}
+                      position={point as [number, number]}
+                      icon={idx === 0 ? tripManualOriginIcon : idx === displayStopPoints.length - 1 ? tripManualDestIcon : tripManualMidIcon}
+                    />
+                  ))}
                 </MapContainer>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={() => setMapSelectionTarget("origin")}>
-                  Seleccionar origen
+                  Origen en mapa
                 </Button>
                 <Button type="button" variant="outline" size="sm" onClick={() => setMapSelectionTarget("destination")}>
-                  Seleccionar destino
+                  Destino en mapa
                 </Button>
                 <Button type="button" variant="outline" size="sm" onClick={clearManualMap}>
-                  Limpiar puntos
+                  Limpiar mapa
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                Clic actual: {mapSelectionTarget === "origin" ? "marcá ORIGEN (azul)" : "marcá DESTINO (verde)"}.
-                {manualOriginPoint ? ` Origen seleccionado: ${manualRouteOrigin || "punto marcado"}.` : ""}
-                {manualDestinationPoint ? ` Destino seleccionado: ${manualRouteDestination || "punto marcado"}.` : ""}
+                Tocá el mapa: {mapSelectionTarget === "origin" ? "primero origen (azul)" : "después destino (verde)"}.
+                {manualOriginPoint ? ` · ${firstStopLabel || "Origen"}` : ""}
+                {manualDestinationPoint ? ` → ${lastStopLabel || "Destino"}` : ""}
               </p>
-            </section>
-          ) : null}
+            </div>
 
-          <section aria-labelledby="trip-assign-client" className="space-y-3 rounded-lg border border-border/80 bg-muted/15 p-4">
-            <h3 id="trip-assign-client" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Empresa / cliente y remito
-            </h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2 sm:col-span-2 lg:col-span-1">
-                <Label>Empresa o cliente</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="trip-route-select" className="text-xs text-muted-foreground">
+                {shouldUseManualRoute ? "Sin rutas sugeridas en esta zona" : "Rutas sugeridas"}
+              </Label>
+              {shouldUseManualRoute ? (
+                <p
+                  id="trip-route-select"
+                  className="flex min-h-10 items-center rounded-lg border border-dashed border-muted-foreground/30 bg-background/80 px-3 py-2 text-sm text-muted-foreground"
+                >
+                  Marcá origen y destino en el mapa.
+                </p>
+              ) : (
+                <Select value={assignmentForm.routeId} onValueChange={(value) => setAssignmentForm((prev) => ({ ...prev, routeId: value }))}>
+                  <SelectTrigger id="trip-route-select" className="h-10 w-full">
+                    <SelectValue placeholder="Elegir ruta" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[1700]">
+                    {filteredRoutes.map((route) => (
+                      <SelectItem key={route.id} value={route.id}>
+                        {route.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">Planificación del viaje</Label>
+              <div className="rounded-xl bg-muted/35 p-2">
+                <div className="relative space-y-1.5 pl-6">
+                  <span className="absolute left-[11px] top-5 bottom-6 w-px bg-border" />
+                  {stopLabels.map((label, idx) => (
+                    <Fragment key={`stop-${idx}`}>
+                      <div className="relative grid grid-cols-[minmax(0,1fr)_2.25rem_2.25rem] items-center gap-2">
+                        <span
+                          className={`absolute -left-5 inline-flex h-3 w-3 items-center justify-center rounded-full border-2 border-white ${
+                            idx === 0 ? "bg-blue-600" : idx === stopLabels.length - 1 ? "bg-emerald-600" : "bg-slate-900"
+                          }`}
+                        />
+                        <Input
+                          className="h-9 min-w-0 w-full rounded-xl border-0 bg-white shadow-sm"
+                          value={label}
+                          placeholder={idx === 0 ? "Origen" : idx === stopLabels.length - 1 ? "Destino" : "Parada"}
+                          onChange={(event) => {
+                            const v = event.target.value;
+                            setStopLabels((prev) => {
+                              const n = [...prev];
+                              n[idx] = v;
+                              return n;
+                            });
+                          }}
+                        />
+                        <div className="flex justify-end">
+                          {idx > 0 && idx < stopLabels.length - 1 ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground"
+                              aria-label="Quitar parada"
+                              onClick={() =>
+                                setStopLabels((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== idx)))
+                              }
+                            >
+                              ×
+                            </Button>
+                          ) : (
+                            <span className="inline-block h-9 w-9 shrink-0" aria-hidden />
+                          )}
+                        </div>
+                        <div className="flex justify-end">
+                          {idx < stopLabels.length - 1 ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 rounded-xl border-dashed"
+                              aria-label="Agregar parada"
+                              onClick={() =>
+                                setStopLabels((prev) => {
+                                  const n = [...prev];
+                                  n.splice(idx + 1, 0, "");
+                                  return n;
+                                })
+                              }
+                            >
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <span className="inline-block h-9 w-9 shrink-0" aria-hidden />
+                          )}
+                        </div>
+                      </div>
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-border/80 bg-background p-4 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Cliente</Label>
                 <Select
                   value={assignmentForm.clientCompanySelect}
                   onValueChange={(value: "SIDERSA" | "Acindar" | "CIPLAR" | "otra") =>
@@ -556,7 +680,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                   }
                 >
                   <SelectTrigger className="h-10 w-full">
-                    <SelectValue placeholder="Seleccionar" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="z-[1700]">
                     {PRINCIPAL_CLIENT_COMPANIES.map((name) => (
@@ -564,54 +688,48 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                         {name}
                       </SelectItem>
                     ))}
-                    <SelectItem value="otra">Otra empresa o cliente</SelectItem>
+                    <SelectItem value="otra">Otra</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               {assignmentForm.clientCompanySelect === "otra" ? (
-                <div className="space-y-2 sm:col-span-2 lg:col-span-1">
-                  <Label htmlFor="trip-client-other">Nombre del cliente</Label>
+                <div className="space-y-1.5">
+                  <Label htmlFor="trip-client-other" className="text-xs text-muted-foreground">
+                    Nombre
+                  </Label>
                   <Input
                     id="trip-client-other"
                     className="h-10"
                     value={assignmentForm.clientCompanyOther}
                     onChange={(event) => setAssignmentForm((prev) => ({ ...prev, clientCompanyOther: event.target.value }))}
-                    placeholder="Ej: Distribuidora regional"
+                    placeholder="Cliente"
                     required
                   />
                 </div>
               ) : null}
-              <div className="space-y-2 sm:col-span-2">
-                {requiresRemitoInput ? (
-                  <>
-                    <Label htmlFor="trip-remito">Número de remito</Label>
-                    <Input
-                      id="trip-remito"
-                      className="h-10 max-w-md"
-                      value={assignmentForm.remitoNumber}
-                      onChange={(event) => setAssignmentForm((prev) => ({ ...prev, remitoNumber: event.target.value }))}
-                      placeholder="Ej: R-458821"
-                      required
-                    />
-                  </>
-                ) : resolvedClientPreview ? (
-                  <p className="text-xs text-muted-foreground">
-                    No hace falta remito: al guardar se asignará un código único generado por el sistema (prefijo SYS-).
-                  </p>
-                ) : null}
-              </div>
+              {requiresRemitoInput ? (
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="trip-remito" className="text-xs text-muted-foreground">
+                    Remito
+                  </Label>
+                  <Input
+                    id="trip-remito"
+                    className="h-10 max-w-md"
+                    value={assignmentForm.remitoNumber}
+                    onChange={(event) => setAssignmentForm((prev) => ({ ...prev, remitoNumber: event.target.value }))}
+                    placeholder="Ej: R-458821"
+                    required
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground sm:col-span-2">Sin remito: se genera código SYS-.</p>
+              )}
             </div>
-          </section>
-
-          <section aria-labelledby="trip-assign-detail" className="space-y-3">
-            <h3 id="trip-assign-detail" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Programación y detalle
-            </h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                  <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  Fecha del viaje
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  Fecha y hora
                 </Label>
                 <Input
                   type="datetime-local"
@@ -621,24 +739,33 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                   required
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Tipo de carga</Label>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Carga</Label>
                 <Input
                   className="h-10"
                   value={assignmentForm.cargo}
                   onChange={(event) => setAssignmentForm((prev) => ({ ...prev, cargo: event.target.value }))}
-                  placeholder="Ej: Químicos industriales - 15 toneladas"
+                  placeholder="Tipo y peso"
                   required
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Condiciones de viaje</Label>
+              <div>
+                <Label htmlFor="trip-conditions-notes" className="text-sm font-medium leading-snug text-foreground">
+                  Condiciones de viaje / Observaciones
+                </Label>
+                <p id="trip-conditions-notes-hint" className="mt-1 text-xs leading-snug text-muted-foreground">
+                  Podés anotar condiciones del viaje, camión escalable, tarifas, ventanas horarias, contacto, etc.
+                </p>
+              </div>
               <Textarea
+                id="trip-conditions-notes"
+                aria-describedby="trip-conditions-notes-hint"
                 value={assignmentForm.plan}
                 onChange={(event) => setAssignmentForm((prev) => ({ ...prev, plan: event.target.value }))}
-                placeholder="Ventanas horarias, paradas, checklist de entrega..."
-                className="min-h-[100px] resize-y"
+                placeholder="Ej.: entrega 8–12 hs, rampa en destino, tarifa acordada, checklist…"
+                className="min-h-[88px] resize-y"
                 required
               />
             </div>

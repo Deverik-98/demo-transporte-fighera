@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "../ui/label";
 import { Badge } from "../ui/badge";
 import { useOperationsData, ZoneId } from "../../lib/operations-data";
-import { isPrincipalClientCompany } from "../../lib/trip-clients";
+import { getPrincipalLoadPlanMaxLength, isPrincipalClientCompany, isValidPrincipalLoadPlan, normalizePrincipalLoadPlanValue } from "../../lib/trip-clients";
 
 type TripImportModalProps = {
   buttonClassName?: string;
@@ -17,7 +17,7 @@ type ImportTripRow = {
   zoneId: ZoneId;
   zone: string;
   clientCompany: string;
-  /** Obligatorio si empresa_cliente es SIDERSA, Acindar o CIPLAR. */
+  /** Plan de carga (solo dígitos) si empresa_cliente es SIDERSA, Acindar o CIPLAR. */
   remito?: string;
   origin: string;
   destination: string;
@@ -46,7 +46,11 @@ function buildMockRows(
     if (!zone) return null;
     const principals = ["SIDERSA", "Acindar", "CIPLAR"] as const;
     const clientCompany = principals[idx % principals.length];
-    const remito = `R-IMPORT-${1000 + idx}`;
+    const maxLen = getPrincipalLoadPlanMaxLength(clientCompany) ?? 7;
+    const remito =
+      maxLen === 7
+        ? `A${String(100000 + idx * 137).slice(-6)}`
+        : `AB${String(100000 + idx * 137).slice(-6)}`;
     return {
       zoneId: zone.id,
       zone: zone.name,
@@ -66,7 +70,7 @@ function buildMockRows(
     zoneId: zone.id,
     zone: zone.name,
     clientCompany: idx % 2 === 0 ? "SIDERSA" : "Cliente masivo demo",
-    remito: idx % 2 === 0 ? `R-FALL-${idx}` : undefined,
+    remito: idx % 2 === 0 ? "A123456" : undefined,
     origin: `${zone.name} Centro`,
     destination: `${zone.name} Norte`,
     cargo: `Carga estandar ${idx + 1} - ${10 + idx} toneladas`,
@@ -92,7 +96,7 @@ export function TripImportModal({ buttonClassName, onTripsImported }: TripImport
   const [simulatingFormat, setSimulatingFormat] = useState<null | "excel" | "csv">(null);
 
   const columnPreview = useMemo(
-    () => ["archivo", ...MIN_REQUIRED_COLUMNS, "plan_viaje", "remito"],
+    () => ["archivo", ...MIN_REQUIRED_COLUMNS, "plan_viaje", "plan_carga"],
     [],
   );
 
@@ -188,10 +192,18 @@ export function TripImportModal({ buttonClassName, onTripsImported }: TripImport
         skipped += 1;
         continue;
       }
-      const rowRemito = row.remito?.trim();
-      if (isPrincipalClientCompany(clientCompany) && !rowRemito) {
-        skipped += 1;
-        continue;
+      const rowRemitoRaw = row.remito?.trim();
+      let remitoForAdd: string | undefined;
+      if (isPrincipalClientCompany(clientCompany)) {
+        const max = getPrincipalLoadPlanMaxLength(clientCompany) ?? 8;
+        const normalized = normalizePrincipalLoadPlanValue(rowRemitoRaw ?? "", max);
+        if (!isValidPrincipalLoadPlan(clientCompany, normalized)) {
+          skipped += 1;
+          continue;
+        }
+        remitoForAdd = normalized;
+      } else {
+        remitoForAdd = undefined;
       }
 
       const created = addTrip({
@@ -209,7 +221,7 @@ export function TripImportModal({ buttonClassName, onTripsImported }: TripImport
         plan: row.plan,
         scheduledAt: row.scheduledAt,
         clientCompany,
-        remitoNumber: rowRemito,
+        remitoNumber: remitoForAdd,
       });
 
       if (!created) {

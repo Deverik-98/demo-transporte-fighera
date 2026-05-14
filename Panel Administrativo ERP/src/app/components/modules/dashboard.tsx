@@ -19,7 +19,7 @@ import { filterAlertsByFleetDocumentationPolicy, useSyncAlerts } from "../../lib
 import { toast } from "sonner";
 
 function getStatusVariant(status: TripStatus) {
-  if (status === "Pendiente" || status === "Sin chofer") return "secondary";
+  if (status === "Sin chofer") return "secondary";
   if (status === "Cancelado") return "destructive";
   if (status === "Entregado") return "success";
   if (status === "En ruta") return "default";
@@ -426,7 +426,6 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                 <SelectTrigger><Filter className="mr-2 h-4 w-4" /><SelectValue placeholder="Estado" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos los estados</SelectItem>
-                  <SelectItem value="Pendiente">Pendiente</SelectItem>
                   <SelectItem value="Sin chofer">Sin chofer</SelectItem>
                   <SelectItem value="Asignado">Asignado</SelectItem>
                   <SelectItem value="Aceptado">Aceptado</SelectItem>
@@ -502,7 +501,10 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                     <div className="space-y-1">
                       <p className="text-sm">{trip.id} · {formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</p>
                       <p className="text-xs text-muted-foreground">
-                        {trip.clientCompany} · <span className="font-mono text-foreground">{trip.remitoNumber}</span>
+                        {trip.clientCompany} ·{" "}
+                        <span className="font-mono text-foreground" title="Plan de carga / ID de envío">
+                          {trip.remitoNumber}
+                        </span>
                       </p>
                       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                         <span>{trip.driver}</span>

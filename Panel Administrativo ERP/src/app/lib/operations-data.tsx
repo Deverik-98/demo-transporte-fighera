@@ -1,7 +1,11 @@
 import React, { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { expirationConfig, realtimeAlerts } from "./mock-data";
-import { generateSystemRemitoReference, isPrincipalClientCompany } from "./trip-clients";
+import {
+  generateAutoLoadPlanReference,
+  isPrincipalClientCompany,
+  isValidPrincipalLoadPlan,
+} from "./trip-clients";
 import { embeddedOperationalZoneFeatures } from "./embedded-operational-zone-geometries";
 import { buildPathForStopCount, formatTripRouteStops } from "./trip-route";
 import {
@@ -29,7 +33,6 @@ import {
 export type ZoneId = string;
 type LatLngExpression = [number, number];
 export type TripStage =
-  | "Pendiente"
   | "Sin chofer"
   | "Asignado"
   | "Aceptado"
@@ -128,7 +131,7 @@ export type PlannedTrip = {
   scheduledAt: string;
   /** Empresa o cliente del viaje. */
   clientCompany: string;
-  /** Número de remito (clientes principales) o código único generado por el sistema (otros). */
+  /** Plan de carga alfanumérico (SIDERSA 7 / Acindar·CIPLAR 8) o ID correlativo AUTO-* (otros). */
   remitoNumber: string;
   timeline?: Array<{ timestamp: string; descripcion: string }>;
   evidencias?: TripDocument[];
@@ -172,7 +175,7 @@ type TripInput = {
   plan: string;
   scheduledAt: string;
   clientCompany: string;
-  /** Obligatorio si clientCompany es SIDERSA, Acindar o CIPLAR; ignorado en otro caso (se genera SYS-*). */
+  /** Obligatorio si clientCompany es SIDERSA, Acindar o CIPLAR (7 u 8 caracteres alfanuméricos); ignorado si no (AUTO-* correlativo). */
   remitoNumber?: string;
 };
 type TripUpdateInput = {
@@ -483,9 +486,15 @@ function normalizeTripsData(items: PlannedTrip[]) {
     "carlos rodríguez": "USR-06",
     "diego fernández": "USR-07",
   };
-  const normalizeTripStage = (raw: string | undefined): TripStage => {
+  const inferStageFromAssignment = (trip: Pick<PlannedTrip, "driver" | "vehiclePlate">): "Sin chofer" | "Asignado" => {
+    const d = (trip.driver ?? "").trim().toLowerCase();
+    const p = (trip.vehiclePlate ?? "").trim().toLowerCase();
+    if (!d || d === "sin asignar" || !p || p === "sin asignar") return "Sin chofer";
+    return "Asignado";
+  };
+  const normalizeTripStage = (raw: string | undefined, trip: Pick<PlannedTrip, "driver" | "vehiclePlate">): TripStage => {
     const status = (raw ?? "").trim().toLowerCase();
-    if (status === "pendiente de aceptación" || status === "pendiente") return "Pendiente";
+    if (status === "pendiente de aceptación" || status === "pendiente") return inferStageFromAssignment(trip);
     if (status === "sin chofer") return "Sin chofer";
     if (status === "asignado") return "Asignado";
     if (status === "aceptado") return "Aceptado";
@@ -494,7 +503,7 @@ function normalizeTripsData(items: PlannedTrip[]) {
     if (status === "entregado") return "Entregado";
     if (status === "cancelado") return "Cancelado";
     if (status === "reprogramado") return "Reprogramado";
-    return "Pendiente";
+    return inferStageFromAssignment(trip);
   };
   const alignTripWithStage = (trip: PlannedTrip, stage: TripStage): PlannedTrip => {
     const driver = trip.driver?.trim() ?? "";
@@ -513,7 +522,7 @@ function normalizeTripsData(items: PlannedTrip[]) {
     };
   };
   return items.map((item) => {
-    const normalizedStatus = normalizeTripStage(item.status);
+    const normalizedStatus = normalizeTripStage(item.status, item);
     const evidencias = normalizeTripDocuments(item.id, item.evidencias);
     const rawStops = Array.isArray((item as { routeStops?: unknown }).routeStops)
       ? (item as { routeStops: string[] }).routeStops.map((s) => String(s).trim()).filter(Boolean)
@@ -790,7 +799,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Salida 06:00, control en peaje Campana, entrega 17:30.",
     scheduledAt: "2026-04-30T15:00",
     clientCompany: "SIDERSA",
-    remitoNumber: "R-458821",
+    remitoNumber: "4588211",
     timeline: [],
     evidencias: [],
   },
@@ -809,7 +818,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Carga en planta 09:00, salida estimada 11:15.",
     scheduledAt: "2026-04-30T18:00",
     clientCompany: "Acindar",
-    remitoNumber: "R-772910",
+    remitoNumber: "77291001",
     timeline: [],
     evidencias: [],
   },
@@ -828,7 +837,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Ruta costera con parada de control a mitad de tramo.",
     scheduledAt: "2026-05-01T09:30",
     clientCompany: "CIPLAR",
-    remitoNumber: "R-339210",
+    remitoNumber: "33921001",
     timeline: [],
     evidencias: [],
   },
@@ -847,7 +856,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Salida 15:00, ventana de descarga 20:00.",
     scheduledAt: "2026-05-01T15:00",
     clientCompany: "Distribuidora Norte S.A.",
-    remitoNumber: "SYS-01004-K9M2PLQX",
+    remitoNumber: "AUTO-0001004",
     timeline: [],
     evidencias: [],
   },
@@ -861,12 +870,12 @@ const initialTrips: PlannedTrip[] = [
     routeStops: ["Ciudad de Córdoba", "Villa María"],
     routePath: initialRouteTemplates[4].path,
     progress: 0,
-    status: "Pendiente",
+    status: "Asignado",
     cargo: "Insumos farmacéuticos - 6 toneladas",
     plan: "Salida 07:30 por corredor sur cordobés.",
     scheduledAt: "2026-05-01T07:30",
     clientCompany: "SIDERSA",
-    remitoNumber: "R-882301",
+    remitoNumber: "8823012",
     timeline: [],
     evidencias: [],
   },
@@ -886,7 +895,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Ingreso a planta siderúrgica y despacho en ventana AM.",
     scheduledAt: "2026-05-01T11:00",
     clientCompany: "Acindar",
-    remitoNumber: "R-991402",
+    remitoNumber: "99140201",
     timeline: [],
     evidencias: [],
   },
@@ -905,7 +914,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Salida nocturna con descarga temprana.",
     scheduledAt: "2026-05-01T22:15",
     clientCompany: "Metalúrgica Sur",
-    remitoNumber: "SYS-01007-NP4QS8W2",
+    remitoNumber: "AUTO-0001007",
     timeline: [],
     evidencias: [],
   },
@@ -924,7 +933,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Entrega en centros de distribución costeros.",
     scheduledAt: "2026-05-02T09:00",
     clientCompany: "CIPLAR",
-    remitoNumber: "R-110034",
+    remitoNumber: "11003401",
     timeline: [],
     evidencias: [],
   },
@@ -944,7 +953,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Ruta en corredor andino con control documental.",
     scheduledAt: "2026-05-02T07:45",
     clientCompany: "Logística Integral S.A.",
-    remitoNumber: "SYS-01009-ZY7XW3V1",
+    remitoNumber: "AUTO-0001009",
     timeline: [],
     evidencias: [],
   },
@@ -963,7 +972,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Consolidación en base Salta y despacho mediodía.",
     scheduledAt: "2026-05-02T13:10",
     clientCompany: "SIDERSA",
-    remitoNumber: "R-220011",
+    remitoNumber: "2200112",
     timeline: [],
     evidencias: [],
   },
@@ -982,7 +991,7 @@ const initialTrips: PlannedTrip[] = [
     plan: "Entrega interior sur de la provincia de Córdoba.",
     scheduledAt: "2026-05-02T05:50",
     clientCompany: "Acindar",
-    remitoNumber: "R-330922",
+    remitoNumber: "33092201",
     timeline: [],
     evidencias: [],
   },
@@ -996,12 +1005,12 @@ const initialTrips: PlannedTrip[] = [
     routeStops: ["Buenos Aires", "Zárate"],
     routePath: initialRouteTemplates[5].path,
     progress: 0,
-    status: "Pendiente",
+    status: "Asignado",
     cargo: "Perfiles metálicos - 13 toneladas",
     plan: "Despacho escalonado para ventana de recepción PM.",
     scheduledAt: "2026-05-02T15:30",
     clientCompany: "Cliente varios",
-    remitoNumber: "SYS-01012-HJ6KL4MN",
+    remitoNumber: "AUTO-0001012",
     timeline: [],
     evidencias: [],
   },
@@ -1341,10 +1350,10 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         const manualRemito = input.remitoNumber?.trim() ?? "";
         let remitoNumber: string;
         if (isPrincipalClientCompany(clientCompany)) {
-          if (!manualRemito) return null;
+          if (!isValidPrincipalLoadPlan(clientCompany, manualRemito)) return null;
           remitoNumber = manualRemito;
         } else {
-          remitoNumber = generateSystemRemitoReference(sequence);
+          remitoNumber = generateAutoLoadPlanReference(sequence);
         }
         const newTrip: PlannedTrip = {
           id: `VJ-${sequence}`,
@@ -1393,10 +1402,10 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
 
         let remitoNumber = input.remitoNumber?.trim() ?? "";
         if (isPrincipalClientCompany(clientCompany)) {
-          if (!remitoNumber) return null;
+          if (!isValidPrincipalLoadPlan(clientCompany, remitoNumber)) return null;
         } else if (!remitoNumber) {
           const sequence = Number(target.id.replace(/\D/g, "")) || 1000 + trips.length + 1;
-          remitoNumber = generateSystemRemitoReference(sequence);
+          remitoNumber = generateAutoLoadPlanReference(sequence);
         }
 
         const normalizedDriver =

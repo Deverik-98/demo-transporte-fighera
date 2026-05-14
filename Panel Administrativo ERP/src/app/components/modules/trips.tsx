@@ -8,6 +8,13 @@ import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useOperationsData, PlannedTrip, TripStage, ZoneId } from "../../lib/operations-data";
+import {
+  getPrincipalLoadPlanMaxLength,
+  isPrincipalClientCompany,
+  isValidPrincipalLoadPlan,
+  loadPlanValidationMessage,
+  normalizePrincipalLoadPlanValue,
+} from "../../lib/trip-clients";
 import { formatTripRouteStops } from "../../lib/trip-route";
 import { AlertTriangle, CheckCircle2, FolderOpen, Navigation, Palette, PenSquare, Plus, Printer, Search, Trash2, Truck, XCircle } from "lucide-react";
 import { TripAssignmentModal } from "./trip-assignment-modal";
@@ -18,7 +25,6 @@ import { toast } from "sonner";
 type DatePreset = "all" | "today" | "tomorrow" | "upcoming" | "specific";
 
 const tripStages: TripStage[] = [
-  "Pendiente",
   "Sin chofer",
   "Asignado",
   "Aceptado",
@@ -64,7 +70,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     zoneId: "",
-    status: "Pendiente" as TripStage,
+    status: "Sin chofer" as TripStage,
     driver: "",
     vehiclePlate: "",
     routeStops: ["", ""] as string[],
@@ -197,6 +203,25 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
     onFocusTripInMap?.(trip.id, trip.zoneId);
   }
 
+  function handleEditClientCompanyChange(value: string) {
+    setEditForm((prev) => {
+      const wasPrincipal = isPrincipalClientCompany(prev.clientCompany.trim());
+      const nowPrincipal = isPrincipalClientCompany(value.trim());
+      let nextRemito = prev.remitoNumber;
+      if (wasPrincipal && !nowPrincipal && editingTripId) {
+        const trip = trips.find((t) => t.id === editingTripId);
+        if (trip) nextRemito = trip.remitoNumber;
+      } else if (!wasPrincipal && nowPrincipal) {
+        nextRemito = "";
+      } else if (wasPrincipal && nowPrincipal && prev.clientCompany.trim().toLowerCase() !== value.trim().toLowerCase()) {
+        const prevLen = getPrincipalLoadPlanMaxLength(prev.clientCompany.trim());
+        const nextLen = getPrincipalLoadPlanMaxLength(value.trim());
+        if (prevLen !== nextLen) nextRemito = "";
+      }
+      return { ...prev, clientCompany: value, remitoNumber: nextRemito };
+    });
+  }
+
   function openEditTrip(trip: PlannedTrip) {
     setEditingTripId(trip.id);
     setEditForm({
@@ -232,6 +257,16 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       toast.error("Completá todas las paradas (origen, destino e intermedias).");
       return;
     }
+    const clientCompany = editForm.clientCompany.trim();
+    if (isPrincipalClientCompany(clientCompany)) {
+      const max = getPrincipalLoadPlanMaxLength(clientCompany) ?? 8;
+      const digits = normalizePrincipalLoadPlanValue(editForm.remitoNumber, max);
+      if (!isValidPrincipalLoadPlan(clientCompany, digits)) {
+        toast.error(loadPlanValidationMessage(clientCompany));
+        return;
+      }
+    }
+
     const updated = updateTrip(editingTripId, {
       zoneId: editForm.zoneId,
       status: nextStatus,
@@ -241,8 +276,10 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       cargo: editForm.cargo,
       plan: editForm.plan,
       scheduledAt: editForm.scheduledAt,
-      clientCompany: editForm.clientCompany,
-      remitoNumber: editForm.remitoNumber,
+      clientCompany,
+      remitoNumber: isPrincipalClientCompany(clientCompany)
+        ? normalizePrincipalLoadPlanValue(editForm.remitoNumber, getPrincipalLoadPlanMaxLength(clientCompany) ?? 8)
+        : editForm.remitoNumber.trim() || undefined,
     });
     if (updated) {
       setEditingTripId(null);
@@ -336,7 +373,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder="Buscar por ID, chofer, patente, empresa, remito o ruta..."
+                placeholder="Buscar por ID, chofer, patente, empresa, plan de carga o ruta..."
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
               />
@@ -426,7 +463,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             />
             <span>
               <span className="font-medium text-foreground">Gris</span>
-              <span className="text-muted-foreground"> · Pendiente o sin chofer</span>
+              <span className="text-muted-foreground"> · Sin chofer (sin asignación)</span>
             </span>
           </li>
           <li className="flex items-center gap-2">
@@ -878,13 +915,48 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                 ))}
               </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Empresa/Cliente</label>
-              <Input value={editForm.clientCompany} onChange={(event) => setEditForm((prev) => ({ ...prev, clientCompany: event.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Remito/Referencia</label>
-              <Input value={editForm.remitoNumber} onChange={(event) => setEditForm((prev) => ({ ...prev, remitoNumber: event.target.value }))} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Cliente / empresa</label>
+                <Input value={editForm.clientCompany} onChange={(event) => handleEditClientCompanyChange(event.target.value)} />
+              </div>
+              <div className="space-y-1">
+                {isPrincipalClientCompany(editForm.clientCompany) ? (
+                  <>
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="edit-load-plan">
+                      Número de plan de carga
+                    </label>
+                    <Input
+                      id="edit-load-plan"
+                      className="font-mono"
+                      autoComplete="off"
+                      maxLength={getPrincipalLoadPlanMaxLength(editForm.clientCompany) ?? 8}
+                      value={editForm.remitoNumber}
+                      onChange={(event) => {
+                        const max = getPrincipalLoadPlanMaxLength(editForm.clientCompany) ?? 8;
+                        setEditForm((prev) => ({
+                          ...prev,
+                          remitoNumber: normalizePrincipalLoadPlanValue(event.target.value, max),
+                        }));
+                      }}
+                      placeholder={getPrincipalLoadPlanMaxLength(editForm.clientCompany) === 7 ? "7 caracteres" : "8 caracteres"}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label className="text-xs font-medium text-muted-foreground" htmlFor="edit-load-plan-auto">
+                      Plan de carga (ID automático)
+                    </label>
+                    <Input
+                      id="edit-load-plan-auto"
+                      readOnly
+                      disabled
+                      className="bg-muted/50 font-mono text-muted-foreground"
+                      value={editForm.remitoNumber}
+                    />
+                  </>
+                )}
+              </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Fecha del viaje</label>

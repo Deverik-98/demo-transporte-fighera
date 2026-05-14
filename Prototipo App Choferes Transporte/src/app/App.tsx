@@ -163,13 +163,14 @@ function normalizeDriverName(value: string) {
 function normalizeIncomingSyncStatus(raw: string | undefined): SyncTrip['status'] {
   if (!raw || typeof raw !== 'string') return 'Asignado';
   const legacy: Record<string, SyncTrip['status']> = {
+    Pendiente: 'Asignado',
     'Pendiente de aceptación': 'Asignado',
     'En Ruta': 'En ruta',
     'En Planta': 'En planta',
     Cargando: 'En planta',
   };
   if (legacy[raw]) return legacy[raw];
-  const allowed: SyncTrip['status'][] = ['Pendiente', 'Sin chofer', 'Asignado', 'Aceptado', 'En planta', 'En ruta', 'Entregado', 'Cancelado', 'Reprogramado'];
+  const allowed: SyncTrip['status'][] = ['Sin chofer', 'Asignado', 'Aceptado', 'En planta', 'En ruta', 'Entregado', 'Cancelado', 'Reprogramado'];
   return (allowed as string[]).includes(raw) ? (raw as SyncTrip['status']) : 'Asignado';
 }
 
@@ -257,7 +258,7 @@ function mapSyncToMobileTrip(syncTrip: SyncTrip): Trip {
     eta: "3h 30m",
     plan: syncTrip.plan,
     estado:
-      normalizedStatus === 'Asignado' || normalizedStatus === 'Pendiente' || normalizedStatus === 'Sin chofer' || normalizedStatus === 'Reprogramado'
+      normalizedStatus === 'Asignado' || normalizedStatus === 'Sin chofer' || normalizedStatus === 'Reprogramado'
         ? 'asignado'
         : normalizedStatus === 'Aceptado'
           ? 'aceptado'

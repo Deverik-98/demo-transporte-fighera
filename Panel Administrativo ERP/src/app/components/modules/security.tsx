@@ -347,7 +347,7 @@ export function Security() {
                         </td>
                         <td className="p-3">
                           <Select value={user.status} onValueChange={(value: UserStatus) => updateUserStatus(user.id, value)}>
-                            <SelectTrigger className="h-8 w-[120px]"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="h-10 w-[120px]"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="Activo">Activo</SelectItem>
                               <SelectItem value="Inactivo">Inactivo</SelectItem>

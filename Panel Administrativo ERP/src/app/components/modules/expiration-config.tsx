@@ -967,7 +967,7 @@ export function ExpirationConfig() {
               <Label>Buscar área en el mapa</Label>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-[180px_1fr_auto]">
                 <select
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                  className="h-10 rounded-md border bg-background px-3 text-sm"
                   value={countryScope}
                   onChange={(event) => setCountryScope(event.target.value as MapCountryScope)}
                 >

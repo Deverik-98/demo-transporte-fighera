@@ -398,7 +398,7 @@ export function VehiclesModule() {
                         value={vehicle.fleetKind}
                         onValueChange={(value: VehicleFleetKind) => updateVehicleFleetKind(vehicle.id, value)}
                       >
-                        <SelectTrigger className="h-8 w-[200px]"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="h-10 w-[200px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Propio">Propio</SelectItem>
                           <SelectItem value="Fletero">Fletero</SelectItem>
@@ -425,7 +425,7 @@ export function VehiclesModule() {
                     </td>
                     <td className="p-3">
                       <Select value={vehicle.status} onValueChange={(value: VehicleStatus) => updateVehicleStatus(vehicle.id, value)}>
-                        <SelectTrigger className="h-8 w-[180px]"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="h-10 w-[180px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Activo">Activo</SelectItem>
                           <SelectItem value="Mantenimiento">Mantenimiento</SelectItem>

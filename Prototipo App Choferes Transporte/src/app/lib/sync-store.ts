@@ -2,7 +2,6 @@ import { LatLngExpression } from "leaflet";
 
 export type SyncZoneId = string;
 export type SyncTripStatus =
-  | "Pendiente"
   | "Sin chofer"
   | "Asignado"
   | "Aceptado"
@@ -27,6 +26,7 @@ export type SyncTrip = {
   plan: string;
   scheduledAt: string;
   clientCompany?: string;
+  /** Plan de carga alfanumérico (clientes con nomenclatura, longitud fija) o ID correlativo AUTO-* (`remitoNumber` en JSON). */
   remitoNumber?: string;
   /** Paradas en orden (primera = origen, última = destino). */
   routeStops?: string[];

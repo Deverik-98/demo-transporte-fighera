@@ -6,7 +6,14 @@ import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { useOperationsData, ZoneId } from "../../lib/operations-data";
-import { PRINCIPAL_CLIENT_COMPANIES, isPrincipalClientCompany } from "../../lib/trip-clients";
+import {
+  PRINCIPAL_CLIENT_COMPANIES,
+  getPrincipalLoadPlanMaxLength,
+  isPrincipalClientCompany,
+  isValidPrincipalLoadPlan,
+  loadPlanValidationMessage,
+  normalizePrincipalLoadPlanValue,
+} from "../../lib/trip-clients";
 import { CalendarClock, Plus } from "lucide-react";
 import { toast } from "sonner";
 import L from "leaflet";
@@ -215,7 +222,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
     if (assignmentForm.clientCompanySelect !== "otra") return assignmentForm.clientCompanySelect;
     return assignmentForm.clientCompanyOther.trim();
   }, [assignmentForm.clientCompanySelect, assignmentForm.clientCompanyOther]);
-  const requiresRemitoInput = isPrincipalClientCompany(resolvedClientPreview);
+  const requiresManualLoadPlan = isPrincipalClientCompany(resolvedClientPreview);
+  const needsCustomClientName = assignmentForm.clientCompanySelect === "otra";
+  const loadPlanMaxLen = requiresManualLoadPlan ? getPrincipalLoadPlanMaxLength(resolvedClientPreview) ?? 7 : null;
   const shouldUseManualRoute = filteredRoutes.length === 0;
   const selectedRouteTemplate = useMemo(
     () => filteredRoutes.find((r) => r.id === assignmentForm.routeId),
@@ -408,8 +417,14 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       toast.error("Indicá la empresa o cliente del viaje.");
       return;
     }
-    if (isPrincipalClientCompany(clientCompany) && !assignmentForm.remitoNumber.trim()) {
-      toast.error("Para SIDERSA, Acindar o CIPLAR debés ingresar el número de remito.");
+    if (isPrincipalClientCompany(clientCompany)) {
+      const digits = assignmentForm.remitoNumber.trim();
+      if (!isValidPrincipalLoadPlan(clientCompany, digits)) {
+        toast.error(loadPlanValidationMessage(clientCompany));
+        return;
+      }
+    } else if (assignmentForm.clientCompanySelect === "otra" && !assignmentForm.clientCompanyOther.trim()) {
+      toast.error("Indicá el nombre del cliente o empresa.");
       return;
     }
 
@@ -515,7 +530,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                 })
               }
             >
-              <SelectTrigger id="trip-zone-select" className="h-11 w-full">
+              <SelectTrigger id="trip-zone-select" className="w-full">
                 <SelectValue placeholder="Elegí una zona" />
               </SelectTrigger>
               <SelectContent className="z-[1700]">
@@ -581,7 +596,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                 </p>
               ) : (
                 <Select value={assignmentForm.routeId} onValueChange={(value) => setAssignmentForm((prev) => ({ ...prev, routeId: value }))}>
-                  <SelectTrigger id="trip-route-select" className="h-10 w-full">
+                  <SelectTrigger id="trip-route-select" className="w-full">
                     <SelectValue placeholder="Elegir ruta" />
                   </SelectTrigger>
                   <SelectContent className="z-[1700]">
@@ -609,7 +624,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                           }`}
                         />
                         <Input
-                          className="h-9 min-w-0 w-full rounded-xl border-0 bg-white shadow-sm"
+                          className="h-10 min-w-0 w-full rounded-xl border-0 bg-white shadow-sm"
                           value={label}
                           placeholder={idx === 0 ? "Origen" : idx === stopLabels.length - 1 ? "Destino" : "Parada"}
                           onChange={(event) => {
@@ -627,7 +642,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="h-9 w-9 shrink-0 rounded-xl text-muted-foreground"
+                              className="h-10 w-10 shrink-0 rounded-xl text-muted-foreground"
                               aria-label="Quitar parada"
                               onClick={() =>
                                 setStopLabels((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== idx)))
@@ -636,7 +651,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                               ×
                             </Button>
                           ) : (
-                            <span className="inline-block h-9 w-9 shrink-0" aria-hidden />
+                            <span className="inline-block h-10 w-10 shrink-0" aria-hidden />
                           )}
                         </div>
                         <div className="flex justify-end">
@@ -645,7 +660,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                               type="button"
                               variant="outline"
                               size="icon"
-                              className="h-9 w-9 shrink-0 rounded-xl border-dashed"
+                              className="h-10 w-10 shrink-0 rounded-xl border-dashed"
                               aria-label="Agregar parada"
                               onClick={() =>
                                 setStopLabels((prev) => {
@@ -658,7 +673,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                               <Plus className="h-4 w-4" />
                             </Button>
                           ) : (
-                            <span className="inline-block h-9 w-9 shrink-0" aria-hidden />
+                            <span className="inline-block h-10 w-10 shrink-0" aria-hidden />
                           )}
                         </div>
                       </div>
@@ -670,17 +685,24 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
           </section>
 
           <section className="rounded-xl border border-border/80 bg-background p-4 space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Cliente</Label>
+            <div className="grid gap-4 sm:grid-cols-2 sm:items-start">
+              <div className="min-w-0 space-y-2">
+                <Label htmlFor="trip-client-select" className="text-sm font-medium text-foreground">
+                  Cliente / empresa
+                </Label>
                 <Select
                   value={assignmentForm.clientCompanySelect}
                   onValueChange={(value: "SIDERSA" | "Acindar" | "CIPLAR" | "otra") =>
-                    setAssignmentForm((prev) => ({ ...prev, clientCompanySelect: value }))
+                    setAssignmentForm((prev) => ({
+                      ...prev,
+                      clientCompanySelect: value,
+                      remitoNumber: "",
+                      clientCompanyOther: value === "otra" ? prev.clientCompanyOther : "",
+                    }))
                   }
                 >
-                  <SelectTrigger className="h-10 w-full">
-                    <SelectValue />
+                  <SelectTrigger id="trip-client-select" className="w-full">
+                    <SelectValue placeholder="Elegí cliente" />
                   </SelectTrigger>
                   <SelectContent className="z-[1700]">
                     {PRINCIPAL_CLIENT_COMPANIES.map((name) => (
@@ -688,42 +710,54 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                         {name}
                       </SelectItem>
                     ))}
-                    <SelectItem value="otra">Otra</SelectItem>
+                    <SelectItem value="otra">Otra empresa…</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              {assignmentForm.clientCompanySelect === "otra" ? (
-                <div className="space-y-1.5">
-                  <Label htmlFor="trip-client-other" className="text-xs text-muted-foreground">
-                    Nombre
-                  </Label>
-                  <Input
-                    id="trip-client-other"
-                    className="h-10"
-                    value={assignmentForm.clientCompanyOther}
-                    onChange={(event) => setAssignmentForm((prev) => ({ ...prev, clientCompanyOther: event.target.value }))}
-                    placeholder="Cliente"
-                    required
-                  />
-                </div>
-              ) : null}
-              {requiresRemitoInput ? (
-                <div className="space-y-1.5 sm:col-span-2">
-                  <Label htmlFor="trip-remito" className="text-xs text-muted-foreground">
-                    Remito
-                  </Label>
-                  <Input
-                    id="trip-remito"
-                    className="h-10 max-w-md"
-                    value={assignmentForm.remitoNumber}
-                    onChange={(event) => setAssignmentForm((prev) => ({ ...prev, remitoNumber: event.target.value }))}
-                    placeholder="Ej: R-458821"
-                    required
-                  />
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground sm:col-span-2">Sin remito: se genera código SYS-.</p>
-              )}
+
+              <div className="min-w-0 space-y-2">
+                {requiresManualLoadPlan ? (
+                  <>
+                    <Label htmlFor="trip-load-plan" className="text-sm font-medium text-foreground">
+                      Número de plan de carga
+                    </Label>
+                    <Input
+                      id="trip-load-plan"
+                      className="font-mono tracking-wide"
+                      autoComplete="off"
+                      maxLength={loadPlanMaxLen ?? 8}
+                      value={assignmentForm.remitoNumber}
+                      onChange={(event) =>
+                        setAssignmentForm((prev) => ({
+                          ...prev,
+                          remitoNumber: normalizePrincipalLoadPlanValue(
+                            event.target.value,
+                            loadPlanMaxLen ?? 8,
+                          ),
+                        }))
+                      }
+                      placeholder={loadPlanMaxLen === 7 ? "7 caracteres" : "8 caracteres"}
+                      required
+                    />
+                  </>
+                ) : needsCustomClientName ? (
+                  <>
+                    <Label htmlFor="trip-client-other" className="text-sm font-medium text-foreground">
+                      Nombre del cliente o empresa
+                    </Label>
+                    <Input
+                      id="trip-client-other"
+                      value={assignmentForm.clientCompanyOther}
+                      onChange={(event) =>
+                        setAssignmentForm((prev) => ({ ...prev, clientCompanyOther: event.target.value }))
+                      }
+                      placeholder="Ej.: distribuidora, obra, contacto comercial"
+                      required
+                      maxLength={120}
+                    />
+                  </>
+                ) : null}
+              </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -733,7 +767,6 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                 </Label>
                 <Input
                   type="datetime-local"
-                  className="h-10"
                   value={assignmentForm.scheduledAt}
                   onChange={(event) => setAssignmentForm((prev) => ({ ...prev, scheduledAt: event.target.value }))}
                   required
@@ -742,7 +775,6 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Carga</Label>
                 <Input
-                  className="h-10"
                   value={assignmentForm.cargo}
                   onChange={(event) => setAssignmentForm((prev) => ({ ...prev, cargo: event.target.value }))}
                   placeholder="Tipo y peso"

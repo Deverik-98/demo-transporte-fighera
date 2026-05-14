@@ -9,6 +9,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { useOperationsData, PlannedTrip, TripStage, ZoneId } from "../../lib/operations-data";
 import {
+  buildFleetKindResolver,
+  defaultTripOperationsFilters,
+  filterTripsForOperations,
+  summarizeTripOperationsFilters,
+  TRIP_KANBAN_AND_FILTER_STAGES,
+  type TripOperationsFilters,
+} from "../../lib/trip-operations-filters";
+import { TripOperationsFiltersPanel } from "./trip-operations-filters-panel";
+import {
   getPrincipalLoadPlanMaxLength,
   isPrincipalClientCompany,
   isValidPrincipalLoadPlan,
@@ -16,40 +25,15 @@ import {
   normalizePrincipalLoadPlanValue,
 } from "../../lib/trip-clients";
 import { formatTripRouteStops } from "../../lib/trip-route";
-import { AlertTriangle, CheckCircle2, FolderOpen, Navigation, Palette, PenSquare, Plus, Printer, Search, Trash2, Truck, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FolderOpen, Navigation, Palette, PenSquare, Plus, Printer, Trash2, Truck, XCircle } from "lucide-react";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { realtimeAlerts } from "../../lib/mock-data";
 import { useSyncAlerts } from "../../lib/sync-store";
 import { toast } from "sonner";
 
-type DatePreset = "all" | "today" | "tomorrow" | "upcoming" | "specific";
-
-const tripStages: TripStage[] = [
-  "Sin chofer",
-  "Asignado",
-  "Aceptado",
-  "En planta",
-  "En ruta",
-  "Entregado",
-  "Cancelado",
-  "Reprogramado",
-];
-
 function formatDateTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("es-AR");
-}
-
-function isSameDay(left: Date, right: Date) {
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
-  );
-}
-
-function toDateOnly(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
 }
 
 type TripsProps = {
@@ -59,11 +43,7 @@ type TripsProps = {
 
 export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
   const { trips, zones, drivers, vehicles, updateTrip, updateTripStatus, cancelTrip, removeTrip } = useOperationsData();
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<TripStage | "all">("all");
-  const [zoneFilter, setZoneFilter] = useState<ZoneId | "all">("all");
-  const [datePreset, setDatePreset] = useState<DatePreset>("all");
-  const [specificDate, setSpecificDate] = useState("");
+  const [filters, setFilters] = useState<TripOperationsFilters>(() => defaultTripOperationsFilters());
   const [printOpen, setPrintOpen] = useState(false);
   const [simulatingDownload, setSimulatingDownload] = useState(false);
   const [alertDetailsTripId, setAlertDetailsTripId] = useState<string | null>(null);
@@ -122,43 +102,11 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
     [alertDetailsTripId, alertsByTripId],
   );
 
+  const getFleetKind = useMemo(() => buildFleetKindResolver(vehicles), [vehicles]);
+
   const filteredTrips = useMemo(() => {
-    const today = toDateOnly(new Date());
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const endOfWeek = new Date(today);
-    const daysUntilSunday = today.getDay() === 0 ? 0 : 7 - today.getDay();
-    endOfWeek.setDate(endOfWeek.getDate() + daysUntilSunday);
-    const specificDateObj = specificDate ? new Date(`${specificDate}T00:00:00`) : null;
-
-    return trips.filter((trip) => {
-      const query = search.trim().toLowerCase();
-      const matchesQuery =
-        !query ||
-        trip.id.toLowerCase().includes(query) ||
-        trip.driver.toLowerCase().includes(query) ||
-        trip.vehiclePlate.toLowerCase().includes(query) ||
-        trip.clientCompany.toLowerCase().includes(query) ||
-        trip.remitoNumber.toLowerCase().includes(query) ||
-        `${trip.origin} ${trip.destination} ${formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}`.toLowerCase().includes(query);
-      const matchesStatus = statusFilter === "all" ? true : trip.status === statusFilter;
-      const matchesZone = zoneFilter === "all" ? true : trip.zoneId === zoneFilter;
-
-      const tripDate = new Date(trip.scheduledAt);
-      let matchesDate = true;
-      if (datePreset === "today") {
-        matchesDate = isSameDay(tripDate, today);
-      } else if (datePreset === "tomorrow") {
-        matchesDate = isSameDay(tripDate, tomorrow);
-      } else if (datePreset === "upcoming") {
-        matchesDate = tripDate > tomorrow && tripDate <= endOfWeek;
-      } else if (datePreset === "specific") {
-        matchesDate = specificDateObj ? isSameDay(tripDate, specificDateObj) : false;
-      }
-
-      return matchesQuery && matchesStatus && matchesZone && matchesDate;
-    });
-  }, [trips, search, statusFilter, zoneFilter, datePreset, specificDate]);
+    return filterTripsForOperations(trips, filters, getFleetKind);
+  }, [trips, filters, getFleetKind]);
 
   const groupedByZone = useMemo(() => {
     const map = new Map<string, { zoneId: ZoneId; zoneName: string; items: PlannedTrip[] }>();
@@ -171,20 +119,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
     return [...map.values()].filter((zone) => zone.items.length > 0);
   }, [filteredTrips, zones]);
 
-  const activeFilterLabel = useMemo(() => {
-    const labels: string[] = [];
-    if (statusFilter !== "all") labels.push(`estado ${statusFilter.toLowerCase()}`);
-    if (zoneFilter !== "all") {
-      const zoneName = zones.find((zone) => zone.id === zoneFilter)?.name ?? zoneFilter;
-      labels.push(`zona ${zoneName}`);
-    }
-    if (datePreset === "today") labels.push("hoy");
-    if (datePreset === "tomorrow") labels.push("mañana");
-    if (datePreset === "upcoming") labels.push("próximos días");
-    if (datePreset === "specific" && specificDate) labels.push(`fecha ${specificDate}`);
-    if (search.trim()) labels.push(`búsqueda "${search.trim()}"`);
-    return labels.length ? labels.join(" · ") : "sin filtros (todos los viajes visibles)";
-  }, [statusFilter, zoneFilter, zones, datePreset, specificDate, search]);
+  const printFilterLabel = useMemo(() => summarizeTripOperationsFilters(filters, zones), [filters, zones]);
 
   const suggestVehiclePlateForDriver = (driverName: string, zoneId: string) => {
     const zoneFleet = vehicles.filter((vehicle) => vehicle.type === "Camión" && vehicle.zoneId === zoneId);
@@ -362,85 +297,28 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             <Printer className="h-4 w-4" />
             Imprimir planilla filtrada
           </Button>
-          <TripAssignmentModal buttonLabel="Crear viaje" onTripCreated={(tripId) => setSearch(tripId)} />
+          <TripAssignmentModal
+            buttonLabel="Crear viaje"
+            onTripCreated={(tripId, zoneId) =>
+              setFilters((prev) => ({
+                ...defaultTripOperationsFilters(),
+                search: tripId,
+                zoneId,
+              }))
+            }
+          />
         </div>
       </div>
 
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                placeholder="Buscar por ID, chofer, patente, empresa, plan de carga o ruta..."
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 lg:w-[980px]">
-              <Select value={zoneFilter} onValueChange={(value: ZoneId | "all") => setZoneFilter(value)}>
-                <SelectTrigger><SelectValue placeholder="Zona" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas las zonas</SelectItem>
-                  {zones.map((zone) => (
-                    <SelectItem key={zone.id} value={zone.id}>
-                      {zone.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={statusFilter} onValueChange={(value: TripStage | "all") => setStatusFilter(value)}>
-                <SelectTrigger><SelectValue placeholder="Estado" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los estados</SelectItem>
-                  {tripStages.map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {status}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={datePreset}
-                onValueChange={(value: DatePreset) => {
-                  setDatePreset(value);
-                  if (value !== "specific") setSpecificDate("");
-                }}
-              >
-                <SelectTrigger><SelectValue placeholder="Fecha" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas las fechas</SelectItem>
-                  <SelectItem value="today">Hoy</SelectItem>
-                  <SelectItem value="tomorrow">Mañana</SelectItem>
-                  <SelectItem value="upcoming">Próximos días</SelectItem>
-                  <SelectItem value="specific">Fecha específica</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                type="date"
-                value={specificDate}
-                disabled={datePreset !== "specific"}
-                placeholder="Fecha específica"
-                onChange={(event) => {
-                  setSpecificDate(event.target.value);
-                  if (event.target.value) setDatePreset("specific");
-                }}
-              />
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setSearch("");
-                  setStatusFilter("all");
-                  setZoneFilter("all");
-                  setDatePreset("all");
-                  setSpecificDate("");
-                }}
-              >
-                Limpiar filtros
-              </Button>
-            </div>
-          </div>
+          <TripOperationsFiltersPanel
+            filters={filters}
+            onPatch={(patch) => setFilters((prev) => ({ ...prev, ...patch }))}
+            onClear={() => setFilters(defaultTripOperationsFilters())}
+            zones={zones}
+            searchPlaceholder="Buscar por ID, chofer, patente, empresa, plan de carga o ruta…"
+          />
         </CardContent>
       </Card>
 
@@ -529,103 +407,11 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
         </ul>
       </section>
 
-      <Tabs defaultValue="kanban" className="space-y-3">
+      <Tabs defaultValue="planilla" className="space-y-3">
         <TabsList>
-          <TabsTrigger value="kanban">Tablero Kanban</TabsTrigger>
           <TabsTrigger value="planilla">Planilla Operativa</TabsTrigger>
+          <TabsTrigger value="kanban">Tablero Kanban</TabsTrigger>
         </TabsList>
-
-        <TabsContent value="kanban">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-5">
-            {tripStages.map((stage) => {
-              const stageTrips = filteredTrips.filter((trip) => trip.status === stage);
-              return (
-                <Card key={stage}>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center justify-between text-sm">
-                      <span>{stage}</span>
-                      <Badge variant="secondary">{stageTrips.length}</Badge>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {stageTrips.length === 0 ? (
-                      <div className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
-                        Sin viajes
-                      </div>
-                    ) : null}
-                    {stageTrips.map((trip) => {
-                      const zoneName = zones.find((zone) => zone.id === trip.zoneId)?.name ?? trip.zoneId;
-                      const incidents = alertsByTripId.get(trip.id) ?? [];
-                      const activeIncidents = incidents.filter((alert) => alert.status === "Activa").length;
-                      return (
-                        <Card key={trip.id} className="bg-muted/40">
-                          <CardContent className="space-y-2 p-3 text-xs">
-                            <div className="flex items-center justify-between">
-                              <span className="font-medium">{trip.id}</span>
-                              <Badge variant="outline" className="font-mono text-[10px]">
-                                {trip.vehiclePlate}
-                              </Badge>
-                            </div>
-                            <p className="text-muted-foreground">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</p>
-                            <p><span className="font-medium">Zona:</span> {zoneName}</p>
-                            <p><span className="font-medium">Chofer:</span> {trip.driver}</p>
-                            <p><span className="font-medium">Patente:</span> {trip.vehiclePlate}</p>
-                            <p><span className="font-medium">Empresa:</span> {trip.clientCompany}</p>
-                            {activeIncidents > 0 ? (
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                className="h-6 px-2 text-[10px]"
-                                onClick={() => setAlertDetailsTripId(trip.id)}
-                              >
-                                <AlertTriangle className="mr-1 h-3 w-3" />
-                                {activeIncidents} alerta(s)
-                              </Button>
-                            ) : null}
-                            <div className="flex flex-wrap gap-1 pt-1">
-                              <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => focusTripInMap(trip)}>
-                                <Navigation className="mr-1 h-3 w-3" />
-                                Mapa
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-[10px]"
-                                onClick={() => onOpenTripDocuments?.(trip.id)}
-                              >
-                                <FolderOpen className="mr-1 h-3 w-3" />
-                                Docs
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-[10px]"
-                                onClick={() => openEditTrip(trip)}
-                              >
-                                <PenSquare className="mr-1 h-3 w-3" />
-                                Editar
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 px-2 text-[10px]"
-                                disabled={trip.status === "Entregado" || trip.status === "Cancelado"}
-                                onClick={() => updateTripStatus(trip.id, "Entregado")}
-                              >
-                                <CheckCircle2 className="mr-1 h-3 w-3" />
-                                Entregar
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </TabsContent>
 
         <TabsContent value="planilla">
           <Card>
@@ -741,6 +527,98 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <TabsContent value="kanban">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-5">
+            {TRIP_KANBAN_AND_FILTER_STAGES.map((stage) => {
+              const stageTrips = filteredTrips.filter((trip) => trip.status === stage);
+              return (
+                <Card key={stage}>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center justify-between text-sm">
+                      <span>{stage}</span>
+                      <Badge variant="secondary">{stageTrips.length}</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {stageTrips.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                        Sin viajes
+                      </div>
+                    ) : null}
+                    {stageTrips.map((trip) => {
+                      const zoneName = zones.find((zone) => zone.id === trip.zoneId)?.name ?? trip.zoneId;
+                      const incidents = alertsByTripId.get(trip.id) ?? [];
+                      const activeIncidents = incidents.filter((alert) => alert.status === "Activa").length;
+                      return (
+                        <Card key={trip.id} className="bg-muted/40">
+                          <CardContent className="space-y-2 p-3 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-medium">{trip.id}</span>
+                              <Badge variant="outline" className="font-mono text-[10px]">
+                                {trip.vehiclePlate}
+                              </Badge>
+                            </div>
+                            <p className="text-muted-foreground">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</p>
+                            <p><span className="font-medium">Zona:</span> {zoneName}</p>
+                            <p><span className="font-medium">Chofer:</span> {trip.driver}</p>
+                            <p><span className="font-medium">Patente:</span> {trip.vehiclePlate}</p>
+                            <p><span className="font-medium">Empresa:</span> {trip.clientCompany}</p>
+                            {activeIncidents > 0 ? (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                className="h-6 px-2 text-[10px]"
+                                onClick={() => setAlertDetailsTripId(trip.id)}
+                              >
+                                <AlertTriangle className="mr-1 h-3 w-3" />
+                                {activeIncidents} alerta(s)
+                              </Button>
+                            ) : null}
+                            <div className="flex flex-wrap gap-1 pt-1">
+                              <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => focusTripInMap(trip)}>
+                                <Navigation className="mr-1 h-3 w-3" />
+                                Mapa
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-[10px]"
+                                onClick={() => onOpenTripDocuments?.(trip.id)}
+                              >
+                                <FolderOpen className="mr-1 h-3 w-3" />
+                                Docs
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-[10px]"
+                                onClick={() => openEditTrip(trip)}
+                              >
+                                <PenSquare className="mr-1 h-3 w-3" />
+                                Editar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-[10px]"
+                                disabled={trip.status === "Entregado" || trip.status === "Cancelado"}
+                                onClick={() => updateTripStatus(trip.id, "Entregado")}
+                              >
+                                <CheckCircle2 className="mr-1 h-3 w-3" />
+                                Entregar
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </TabsContent>
       </Tabs>
 
       <Dialog open={editingTripId !== null} onOpenChange={(open) => !open && setEditingTripId(null)}>
@@ -795,7 +673,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {tripStages.map((status) => (
+                  {TRIP_KANBAN_AND_FILTER_STAGES.map((status) => (
                     <SelectItem key={status} value={status}>{status}</SelectItem>
                   ))}
                 </SelectContent>
@@ -1026,7 +904,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               <div className="mb-4 border-b border-black pb-3">
                 <h2 className="text-xl font-bold">Transportes Fighera — Planilla Operativa</h2>
                 <p className="text-sm">Fecha: {new Date().toLocaleDateString("es-AR")}</p>
-                <p className="text-sm">Filtros aplicados: {activeFilterLabel}</p>
+                <p className="text-sm">Filtros aplicados: {printFilterLabel}</p>
               </div>
 
               <div className="space-y-4 text-xs">

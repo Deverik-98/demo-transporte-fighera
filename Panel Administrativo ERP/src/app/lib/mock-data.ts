@@ -10,13 +10,13 @@ export const trips = [
 ];
 
 export const alerts = [
-  { id: 1, date: "2026-04-28 14:23", vehicle: "AB123CD", driver: "Juan Pérez", type: "Desvío de Ruta", severity: "Alta", status: "Pendiente" },
-  { id: 2, date: "2026-04-28 09:15", vehicle: "XY456EF", driver: "María González", type: "Vencimiento de VTV", severity: "Media", status: "Pendiente" },
+  { id: 1, date: "2026-04-28 14:23", vehicle: "AB123CD", driver: "Juan Pérez", type: "Desvío de Ruta", severity: "Alta", status: "Activa" },
+  { id: 2, date: "2026-04-28 09:15", vehicle: "XY456EF", driver: "María González", type: "Vencimiento de VTV", severity: "Media", status: "Activa" },
   { id: 3, date: "2026-04-27 18:47", vehicle: "MN789GH", driver: "Carlos Rodríguez", type: "Retraso en Entrega", severity: "Baja", status: "Resuelta" },
-  { id: 4, date: "2026-04-28 11:32", vehicle: "PQ234IJ", driver: "Roberto Silva", type: "Vencimiento de Licencia", severity: "Alta", status: "Pendiente" },
+  { id: 4, date: "2026-04-28 11:32", vehicle: "PQ234IJ", driver: "Roberto Silva", type: "Vencimiento de Licencia", severity: "Alta", status: "Activa" },
   { id: 5, date: "2026-04-28 07:05", vehicle: "ST567KL", driver: "Ana Martínez", type: "Botón de Pánico", severity: "Alta", status: "Resuelta" },
-  { id: 6, date: "2026-04-27 22:18", vehicle: "UV890MN", driver: "Diego Fernández", type: "Vencimiento de Seguro", severity: "Alta", status: "Pendiente" },
-  { id: 7, date: "2026-04-28 13:50", vehicle: "WX123OP", driver: "Laura Sánchez", type: "Parada No Autorizada", severity: "Media", status: "Pendiente" },
+  { id: 6, date: "2026-04-27 22:18", vehicle: "UV890MN", driver: "Diego Fernández", type: "Vencimiento de Seguro", severity: "Alta", status: "Activa" },
+  { id: 7, date: "2026-04-28 13:50", vehicle: "WX123OP", driver: "Laura Sánchez", type: "Parada No Autorizada", severity: "Media", status: "Activa" },
   { id: 8, date: "2026-04-26 16:22", vehicle: "YZ456QR", driver: "Miguel Torres", type: "Vencimiento Psicofísico", severity: "Media", status: "Resuelta" },
 ];
 

@@ -162,9 +162,9 @@ function normalizeDriverName(value: string) {
 
 function normalizeIncomingSyncStatus(raw: string | undefined): SyncTrip['status'] {
   if (!raw || typeof raw !== 'string') return 'Asignado';
+  const lower = raw.trim().toLowerCase();
+  if (lower === 'pendiente' || lower === 'pendiente de aceptación') return 'Asignado';
   const legacy: Record<string, SyncTrip['status']> = {
-    Pendiente: 'Asignado',
-    'Pendiente de aceptación': 'Asignado',
     'En Ruta': 'En ruta',
     'En Planta': 'En planta',
     Cargando: 'En planta',

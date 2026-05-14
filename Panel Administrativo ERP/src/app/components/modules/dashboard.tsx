@@ -5,12 +5,18 @@ import "leaflet/dist/leaflet.css";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
-import { Input } from "../ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { realtimeAlerts } from "../../lib/mock-data";
-import { AlertTriangle, Clock, Filter, FolderOpen, MapPin, Printer, Search, Truck } from "lucide-react";
+import { AlertTriangle, Clock, FolderOpen, MapPin, Printer } from "lucide-react";
 import { useOperationsData, VehicleFleetKind, ZoneId, TripStatus, PlannedTrip } from "../../lib/operations-data";
+import {
+  buildFleetKindResolver,
+  defaultTripOperationsFilters,
+  filterTripsForOperations,
+  summarizeTripOperationsFilters,
+  type TripOperationsFilters,
+} from "../../lib/trip-operations-filters";
+import { TripOperationsFiltersPanel } from "./trip-operations-filters-panel";
 import { formatTripRouteStops } from "../../lib/trip-route";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { TripImportModal } from "./trip-import-modal";
@@ -246,33 +252,23 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
     () => filterAlertsByFleetDocumentationPolicy(syncedAlertsRaw, vehicles),
     [syncedAlertsRaw, vehicles],
   );
-  const [selectedZone, setSelectedZone] = useState<ZoneId | null>(null);
-  const [selectedStatus, setSelectedStatus] = useState<TripStatus | "all">("all");
-  const [selectedFleet, setSelectedFleet] = useState<"all" | VehicleFleetKind>("all");
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<TripOperationsFilters>(() => defaultTripOperationsFilters());
   const [printOpen, setPrintOpen] = useState(false);
   const [simulatingDownload, setSimulatingDownload] = useState(false);
   const isDarkTheme = resolvedTheme === "dark";
+
+  const selectedZoneForMap = filters.zoneId === "all" ? null : filters.zoneId;
 
   function openTripDocuments(tripId: string) {
     window.dispatchEvent(new CustomEvent("tf-open-trip-documents", { detail: { tripId } }));
   }
 
-  const fleetByPlate = useMemo(() => {
-    const map = new Map<string, VehicleFleetKind>();
-    vehicles.forEach((vehicle) => map.set(normalizePlateValue(vehicle.plate), vehicle.fleetKind));
-    return map;
-  }, [vehicles]);
-
-  const getFleetKind = useMemo(
-    () => (plate: string) => fleetByPlate.get(normalizePlateValue(plate)),
-    [fleetByPlate],
-  );
+  const getFleetKind = useMemo(() => buildFleetKindResolver(vehicles), [vehicles]);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ zoneId?: ZoneId }>).detail;
-      if (detail?.zoneId) setSelectedZone(detail.zoneId);
+      if (detail?.zoneId) setFilters((prev) => ({ ...prev, zoneId: detail.zoneId }));
     };
     window.addEventListener("tf-select-zone", handler);
     return () => window.removeEventListener("tf-select-zone", handler);
@@ -282,34 +278,23 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<{ tripId?: string; zoneId?: ZoneId }>).detail;
       if (!detail?.tripId) return;
-      setSearch(detail.tripId);
-      if (detail.zoneId) setSelectedZone(detail.zoneId);
+      setFilters((prev) => ({
+        ...prev,
+        search: detail.tripId,
+        zoneId: detail.zoneId ?? prev.zoneId,
+      }));
     };
     window.addEventListener("tf-focus-trip", handler);
     return () => window.removeEventListener("tf-focus-trip", handler);
   }, []);
 
-  /** Viajes que cumplen estado + flota + búsqueda (sin filtro de zona). Sirve para badges de zona y consistencia con el listado. */
   const tripsMatchingGlobalFilters = useMemo(() => {
-    return trips.filter((trip) => {
-      const statusMatch = selectedStatus === "all" ? true : trip.status === selectedStatus;
-      const fleetKind = getFleetKind(trip.vehiclePlate);
-      const fleetMatch = selectedFleet === "all" ? true : fleetKind === selectedFleet;
-      const query = search.trim().toLowerCase();
-      const searchMatch =
-        !query ||
-        trip.id.toLowerCase().includes(query) ||
-        trip.driver.toLowerCase().includes(query) ||
-        trip.vehiclePlate.toLowerCase().includes(query) ||
-        trip.clientCompany.toLowerCase().includes(query) ||
-        `${trip.origin} ${trip.destination} ${formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}`.toLowerCase().includes(query);
-      return statusMatch && fleetMatch && searchMatch;
-    });
-  }, [trips, selectedStatus, selectedFleet, search, getFleetKind]);
+    return filterTripsForOperations(trips, { ...filters, zoneId: "all" }, getFleetKind);
+  }, [trips, filters, getFleetKind]);
 
   const visibleTrips = useMemo(() => {
-    return tripsMatchingGlobalFilters.filter((trip) => (selectedZone ? trip.zoneId === selectedZone : true));
-  }, [tripsMatchingGlobalFilters, selectedZone]);
+    return filterTripsForOperations(trips, filters, getFleetKind);
+  }, [trips, filters, getFleetKind]);
 
   const zoneStats = useMemo(
     () =>
@@ -352,17 +337,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
       .filter((zone) => zone.items.length > 0);
   }, [visibleTrips, zones]);
 
-  const printFilterLabel = useMemo(() => {
-    const labels: string[] = [];
-    if (selectedStatus !== "all") labels.push(`estado ${selectedStatus.toLowerCase()}`);
-    if (selectedFleet !== "all") labels.push(`flota ${selectedFleet.toLowerCase()}`);
-    if (selectedZone) {
-      const zoneName = zones.find((zone) => zone.id === selectedZone)?.name ?? selectedZone;
-      labels.push(`zona ${zoneName}`);
-    }
-    if (search.trim()) labels.push(`búsqueda "${search.trim()}"`);
-    return labels.length ? labels.join(" · ") : "sin filtros (todos los viajes visibles)";
-  }, [selectedStatus, selectedFleet, selectedZone, zones, search]);
+  const printFilterLabel = useMemo(() => summarizeTripOperationsFilters(filters, zones), [filters, zones]);
 
   async function simulatePdfDownload() {
     if (simulatingDownload) return;
@@ -396,18 +371,18 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
             onTripsImported={({ tripIds, zoneIds }) => {
               const firstTripId = tripIds[0];
               const firstZone = zoneIds[0];
-              if (firstZone) setSelectedZone(firstZone);
-              if (firstTripId) setSearch(firstTripId);
+              setFilters((prev) => ({
+                ...prev,
+                zoneId: firstZone ?? prev.zoneId,
+                search: firstTripId ?? prev.search,
+              }));
             }}
           />
           <TripAssignmentModal
             buttonLabel="Asignar nuevo viaje"
             buttonClassName="w-full sm:w-auto"
             onTripCreated={(tripId) => {
-              setSelectedZone(null);
-              setSearch("");
-              setSelectedStatus("all");
-              setSelectedFleet("all");
+              setFilters(defaultTripOperationsFilters());
               toast.success(`Viaje ${tripId} creado y visible en el tablero general.`);
             }}
           />
@@ -416,50 +391,13 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
 
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input className="pl-9" placeholder="Buscar viaje, chofer, patente, ruta..." value={search} onChange={(event) => setSearch(event.target.value)} />
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:w-[min(100%,680px)] lg:shrink-0">
-              <Select value={selectedStatus} onValueChange={(value: TripStatus | "all") => setSelectedStatus(value)}>
-                <SelectTrigger><Filter className="mr-2 h-4 w-4" /><SelectValue placeholder="Estado" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los estados</SelectItem>
-                  <SelectItem value="Sin chofer">Sin chofer</SelectItem>
-                  <SelectItem value="Asignado">Asignado</SelectItem>
-                  <SelectItem value="Aceptado">Aceptado</SelectItem>
-                  <SelectItem value="En planta">En planta</SelectItem>
-                  <SelectItem value="En ruta">En ruta</SelectItem>
-                  <SelectItem value="Entregado">Entregado</SelectItem>
-                  <SelectItem value="Cancelado">Cancelado</SelectItem>
-                  <SelectItem value="Reprogramado">Reprogramado</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={selectedFleet} onValueChange={(value: "all" | VehicleFleetKind) => setSelectedFleet(value)}>
-                <SelectTrigger><Truck className="mr-2 h-4 w-4" /><SelectValue placeholder="Flota" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Toda la flota</SelectItem>
-                  <SelectItem value="Propio">Solo vehículos propios</SelectItem>
-                  <SelectItem value="Fletero">Solo fleteros</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button variant="outline" className="sm:col-span-2 lg:col-span-1" onClick={() => { setSelectedStatus("all"); setSelectedFleet("all"); setSearch(""); setSelectedZone(null); }}>
-                Limpiar filtros
-              </Button>
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button variant={selectedZone === null ? "default" : "outline"} size="sm" onClick={() => setSelectedZone(null)}>
-              Todas las zonas
-            </Button>
-            {zoneStats.map((zone) => (
-              <Button key={zone.id} variant={selectedZone === zone.id ? "default" : "outline"} size="sm" onClick={() => setSelectedZone(zone.id)}>
-                {zone.name}
-                <Badge variant="secondary" className="ml-2">{zone.activeTrips}</Badge>
-              </Button>
-            ))}
-          </div>
+          <TripOperationsFiltersPanel
+            filters={filters}
+            onPatch={(patch) => setFilters((prev) => ({ ...prev, ...patch }))}
+            onClear={() => setFilters(defaultTripOperationsFilters())}
+            zones={zones}
+            searchPlaceholder="Buscar viaje, chofer, patente, plan de carga o ruta…"
+          />
         </CardContent>
       </Card>
 
@@ -484,7 +422,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
         <CardContent className="space-y-4">
           <UnifiedRouteMap
             visibleTrips={visibleTrips}
-            selectedZone={selectedZone}
+            selectedZone={selectedZoneForMap}
             zones={zones}
             isDarkTheme={isDarkTheme}
             getFleetKind={getFleetKind}

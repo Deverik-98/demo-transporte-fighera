@@ -21,7 +21,11 @@ import { formatTripRouteStops } from "../../lib/trip-route";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { TripImportModal } from "./trip-import-modal";
 import { useTheme } from "next-themes";
-import { filterAlertsByFleetDocumentationPolicy, useSyncAlerts } from "../../lib/sync-store";
+import {
+  alertBelongsToOperationalTrip,
+  filterAlertsByFleetDocumentationPolicy,
+  useSyncAlerts,
+} from "../../lib/sync-store";
 import { toast } from "sonner";
 
 function getStatusVariant(status: TripStatus) {
@@ -228,10 +232,6 @@ function UnifiedRouteMap({
   );
 }
 
-function normalizePlateValue(plate: string) {
-  return plate.trim().toUpperCase();
-}
-
 export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () => void }) {
   const { resolvedTheme } = useTheme();
   const { zones, trips, vehicles } = useOperationsData();
@@ -300,15 +300,11 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
     () =>
       zones.map((zone) => {
         const zoneTrips = tripsMatchingGlobalFilters.filter((trip) => trip.zoneId === zone.id);
-        const zoneTripIds = new Set(zoneTrips.map((trip) => trip.id));
-        const zonePlates = new Set(zoneTrips.map((trip) => normalizePlateValue(trip.vehiclePlate)));
         return {
           ...zone,
           activeTrips: zoneTrips.filter((trip) => trip.status !== "Entregado").length,
-          alerts: syncedAlerts.filter(
-            (alert) =>
-              (alert.tripId ? zoneTripIds.has(alert.tripId) : false) ||
-              (alert.vehiclePlate ? zonePlates.has(normalizePlateValue(alert.vehiclePlate)) : false),
+          alerts: syncedAlerts.filter((alert) =>
+            zoneTrips.some((trip) => alertBelongsToOperationalTrip(alert, trip.id, trip.vehiclePlate)),
           ).length,
         };
       }),
@@ -316,13 +312,9 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
   );
 
   const dashboardAlerts = useMemo(() => {
-    const tripIds = new Set(visibleTrips.map((trip) => trip.id));
-    const plates = new Set(visibleTrips.map((trip) => normalizePlateValue(trip.vehiclePlate)));
-    return syncedAlerts.filter((alert) => {
-      if (alert.tripId && tripIds.has(alert.tripId)) return true;
-      if (alert.vehiclePlate && plates.has(normalizePlateValue(alert.vehiclePlate))) return true;
-      return false;
-    });
+    return syncedAlerts.filter((alert) =>
+      visibleTrips.some((trip) => alertBelongsToOperationalTrip(alert, trip.id, trip.vehiclePlate)),
+    );
   }, [syncedAlerts, visibleTrips]);
 
   const printGroups = useMemo(() => {
@@ -346,7 +338,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
     setSimulatingDownload(false);
     setPrintOpen(false);
     toast.success("Descarga simulada completada", {
-      description: "Se simuló la descarga del PDF con los filtros del Centro de Operaciones.",
+      description: "Se simuló la descarga del PDF con los filtros actuales.",
     });
   }
 
@@ -357,17 +349,24 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
           <h1>Monitor de Control</h1>
           <p className="text-sm text-muted-foreground">Visualización operativa en tiempo real con asignación rápida de viajes.</p>
         </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Button
-            variant="outline"
-            className="w-full sm:w-auto"
-            onClick={() => setPrintOpen(true)}
-          >
-            <Printer className="mr-2 h-4 w-4" />
-            Descargar PDF (simulado)
+        <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:justify-end lg:w-auto">
+          <Button size="lg" className="gap-2" onClick={() => setPrintOpen(true)}>
+            <Printer className="h-4 w-4" />
+            Imprimir planilla filtrada
           </Button>
+          <TripAssignmentModal
+            buttonLabel="Crear viaje"
+            onTripCreated={(tripId, zoneId) => {
+              setFilters((prev) => ({
+                ...defaultTripOperationsFilters(),
+                search: tripId,
+                zoneId: zoneId ?? prev.zoneId,
+              }));
+              toast.success(`Viaje ${tripId} creado y visible en el tablero general.`);
+            }}
+          />
           <TripImportModal
-            buttonClassName="w-full sm:w-auto"
+            buttonClassName="gap-2"
             onTripsImported={({ tripIds, zoneIds }) => {
               const firstTripId = tripIds[0];
               const firstZone = zoneIds[0];
@@ -376,14 +375,6 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                 zoneId: firstZone ?? prev.zoneId,
                 search: firstTripId ?? prev.search,
               }));
-            }}
-          />
-          <TripAssignmentModal
-            buttonLabel="Asignar nuevo viaje"
-            buttonClassName="w-full sm:w-auto"
-            onTripCreated={(tripId) => {
-              setFilters(defaultTripOperationsFilters());
-              toast.success(`Viaje ${tripId} creado y visible en el tablero general.`);
             }}
           />
         </div>
@@ -523,10 +514,8 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
       <Dialog open={printOpen} onOpenChange={setPrintOpen}>
         <DialogContent className="max-h-[95vh] max-w-[95vw] overflow-y-auto sm:max-w-6xl">
           <DialogHeader>
-            <DialogTitle>Previsualización de Planilla Operativa</DialogTitle>
-            <DialogDescription>
-              Se usa exactamente el conjunto filtrado del Centro de Operaciones.
-            </DialogDescription>
+            <DialogTitle>Previsualización de Planilla Operativa Filtrada</DialogTitle>
+            <DialogDescription>Se imprime exactamente la misma data visible según filtros activos.</DialogDescription>
           </DialogHeader>
           <div className="flex justify-center overflow-auto bg-muted/50 p-4">
             <div className="w-[210mm] min-h-[297mm] bg-white p-6 text-black shadow-lg">
@@ -549,6 +538,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                             <th className="border border-black px-1 py-1 text-left">Fecha</th>
                             <th className="border border-black px-1 py-1 text-left">Chofer</th>
                             <th className="border border-black px-1 py-1 text-left">Empresa</th>
+                            <th className="border border-black px-1 py-1 text-left">Nº plan</th>
                             <th className="border border-black px-1 py-1 text-left">Camión</th>
                             <th className="border border-black px-1 py-1 text-left">Ruta</th>
                             <th className="border border-black px-1 py-1 text-left">Carga</th>
@@ -562,6 +552,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                               <td className="border border-black px-1 py-1">{new Date(trip.scheduledAt).toLocaleString("es-AR")}</td>
                               <td className="border border-black px-1 py-1">{trip.driver}</td>
                               <td className="border border-black px-1 py-1">{trip.clientCompany}</td>
+                              <td className="border border-black px-1 py-1 font-mono">{trip.remitoNumber}</td>
                               <td className="border border-black px-1 py-1">{trip.vehiclePlate}</td>
                               <td className="border border-black px-1 py-1">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="border border-black px-1 py-1">{trip.cargo}</td>

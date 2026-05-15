@@ -1,12 +1,16 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
+import { MapContainer, Marker, Polyline, TileLayer, useMapEvents } from "react-leaflet";
+import { type LatLngExpression } from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { useOperationsData, PlannedTrip, TripStage, ZoneId } from "../../lib/operations-data";
 import {
   buildFleetKindResolver,
@@ -24,12 +28,30 @@ import {
   loadPlanValidationMessage,
   normalizePrincipalLoadPlanValue,
 } from "../../lib/trip-clients";
-import { formatTripRouteStops } from "../../lib/trip-route";
+import { buildPathForStopCount, formatTripRouteStops } from "../../lib/trip-route";
+import {
+  AutoFitMapBounds,
+  fetchRoadPolyline,
+  geocodePlaceName,
+  reverseGeocodePlaceName,
+  tripManualDestIcon,
+  tripManualMidIcon,
+  tripManualOriginIcon,
+} from "./trip-route-map-support";
 import { AlertTriangle, CheckCircle2, FolderOpen, Navigation, Palette, PenSquare, Plus, Printer, Trash2, Truck, XCircle } from "lucide-react";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { realtimeAlerts } from "../../lib/mock-data";
-import { useSyncAlerts } from "../../lib/sync-store";
+import { alertBelongsToOperationalTrip, useSyncAlerts } from "../../lib/sync-store";
 import { toast } from "sonner";
+
+function EditTripRouteMapClick({ onPick }: { onPick: (point: [number, number]) => void }) {
+  useMapEvents({
+    click(e) {
+      onPick([e.latlng.lat, e.latlng.lng]);
+    },
+  });
+  return null;
+}
 
 function formatDateTime(value: string) {
   const date = new Date(value);
@@ -42,7 +64,7 @@ type TripsProps = {
 };
 
 export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
-  const { trips, zones, drivers, vehicles, updateTrip, updateTripStatus, cancelTrip, removeTrip } = useOperationsData();
+  const { trips, zones, drivers, vehicles, routeTemplates, updateTrip, updateTripStatus, cancelTrip, removeTrip } = useOperationsData();
   const [filters, setFilters] = useState<TripOperationsFilters>(() => defaultTripOperationsFilters());
   const [printOpen, setPrintOpen] = useState(false);
   const [simulatingDownload, setSimulatingDownload] = useState(false);
@@ -50,16 +72,27 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     zoneId: "",
+    routeId: "",
     status: "Sin chofer" as TripStage,
     driver: "",
     vehiclePlate: "",
     routeStops: ["", ""] as string[],
+    routePath: [] as LatLngExpression[],
     cargo: "",
     plan: "",
     scheduledAt: "",
     clientCompany: "",
     remitoNumber: "",
   });
+  const [editManualOriginPoint, setEditManualOriginPoint] = useState<[number, number] | null>(null);
+  const [editManualDestinationPoint, setEditManualDestinationPoint] = useState<[number, number] | null>(null);
+  const [editMapSelectionTarget, setEditMapSelectionTarget] = useState<"origin" | "destination">("origin");
+  const [editResolvedStopPoints, setEditResolvedStopPoints] = useState<[number, number][]>([]);
+  const [editPreviewGeoPath, setEditPreviewGeoPath] = useState<LatLngExpression[]>([]);
+  const editGeocodeCacheRef = useRef<Map<string, [number, number] | null>>(new Map());
+  const editRouteResolveSeqRef = useRef(0);
+  const editMapSelRef = useRef(editMapSelectionTarget);
+  editMapSelRef.current = editMapSelectionTarget;
 
   const syncAlerts = useSyncAlerts(
     realtimeAlerts.map((alert) => ({
@@ -78,12 +111,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
   const alertsByTripId = useMemo(() => {
     const map = new Map<string, typeof syncAlerts>();
     trips.forEach((trip) => {
-      const plate = trip.vehiclePlate.trim().toUpperCase();
-      const alerts = syncAlerts.filter(
-        (alert) =>
-          alert.tripId === trip.id ||
-          (alert.vehiclePlate?.trim().toUpperCase() ?? "") === plate,
-      );
+      const alerts = syncAlerts.filter((alert) => alertBelongsToOperationalTrip(alert, trip.id, trip.vehiclePlate));
       map.set(trip.id, alerts);
     });
     return map;
@@ -133,6 +161,151 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
     () => vehicles.filter((vehicle) => vehicle.type === "Camión" && vehicle.zoneId === editForm.zoneId),
     [vehicles, editForm.zoneId],
   );
+  const editZoneRoutes = useMemo(
+    () => routeTemplates.filter((route) => route.zoneId === editForm.zoneId),
+    [routeTemplates, editForm.zoneId],
+  );
+  const editSelectedZone = useMemo(
+    () => zones.find((zone) => zone.id === editForm.zoneId),
+    [zones, editForm.zoneId],
+  );
+  const editSelectedRouteTemplate = useMemo(
+    () => editZoneRoutes.find((route) => route.id === editForm.routeId),
+    [editZoneRoutes, editForm.routeId],
+  );
+  const editShouldUseManualRoute = editZoneRoutes.length === 0;
+  const editEffectivePreviewPath = useMemo<LatLngExpression[]>(() => {
+    if (editPreviewGeoPath.length >= 2) return editPreviewGeoPath;
+    const path = (editSelectedRouteTemplate?.path ?? editForm.routePath) as LatLngExpression[];
+    if (!path.length) return [];
+    return buildPathForStopCount(path, Math.max(2, editForm.routeStops.length));
+  }, [editPreviewGeoPath, editSelectedRouteTemplate, editForm.routePath, editForm.routeStops.length]);
+  const editDisplayStopPoints = useMemo<LatLngExpression[]>(() => {
+    if (editResolvedStopPoints.length >= 2) return editResolvedStopPoints;
+    const path = (editSelectedRouteTemplate?.path ?? editForm.routePath) as LatLngExpression[];
+    if (path.length >= 2) return buildPathForStopCount(path, Math.max(2, editForm.routeStops.length));
+    return [];
+  }, [editResolvedStopPoints, editSelectedRouteTemplate, editForm.routePath, editForm.routeStops.length]);
+  const editMapCenter = useMemo<LatLngExpression>(() => {
+    if (editManualOriginPoint) return editManualOriginPoint;
+    if (editSelectedRouteTemplate?.path?.length) return editSelectedRouteTemplate.path[0] as LatLngExpression;
+    if (editForm.routePath.length && Number.isFinite(Number(editForm.routePath[0]?.[0])))
+      return editForm.routePath[0] as LatLngExpression;
+    return editSelectedZone?.mapCenter ?? [-34.6037, -58.3816];
+  }, [editManualOriginPoint, editSelectedRouteTemplate, editForm.routePath, editSelectedZone]);
+
+  useEffect(() => {
+    if (editingTripId) return;
+    setEditManualOriginPoint(null);
+    setEditManualDestinationPoint(null);
+    setEditMapSelectionTarget("origin");
+    setEditResolvedStopPoints([]);
+    setEditPreviewGeoPath([]);
+    editGeocodeCacheRef.current = new Map();
+  }, [editingTripId]);
+
+  useEffect(() => {
+    if (!editingTripId) return;
+    const labels = editForm.routeStops.map((s) => s.trim());
+    if (labels.length < 2 || labels.some((s) => !s)) {
+      setEditResolvedStopPoints([]);
+      setEditPreviewGeoPath([]);
+      return;
+    }
+    const currentSeq = ++editRouteResolveSeqRef.current;
+    const timer = window.setTimeout(async () => {
+      const coords: [number, number][] = [];
+      for (let i = 0; i < labels.length; i++) {
+        const key = labels[i].toLowerCase();
+        if (i === 0 && editManualOriginPoint) {
+          coords.push(editManualOriginPoint);
+          editGeocodeCacheRef.current.set(key, editManualOriginPoint);
+          continue;
+        }
+        if (i === labels.length - 1 && editManualDestinationPoint) {
+          coords.push(editManualDestinationPoint);
+          editGeocodeCacheRef.current.set(key, editManualDestinationPoint);
+          continue;
+        }
+        const cached = editGeocodeCacheRef.current.get(key);
+        if (cached) {
+          coords.push(cached);
+          continue;
+        }
+        const geo = await geocodePlaceName(labels[i]);
+        editGeocodeCacheRef.current.set(key, geo);
+        if (!geo) continue;
+        coords.push(geo);
+      }
+      if (currentSeq !== editRouteResolveSeqRef.current) return;
+      if (coords.length < 2) {
+        setEditResolvedStopPoints([]);
+        setEditPreviewGeoPath([]);
+        return;
+      }
+      setEditResolvedStopPoints(coords);
+      const roadPath = await fetchRoadPolyline(coords);
+      if (currentSeq !== editRouteResolveSeqRef.current) return;
+      setEditPreviewGeoPath(roadPath.length >= 2 ? roadPath : coords);
+    }, 360);
+    return () => window.clearTimeout(timer);
+  }, [editForm.routeStops, editManualOriginPoint, editManualDestinationPoint, editingTripId]);
+
+  const handleEditManualMapClick = useCallback((point: [number, number]) => {
+    const target = editMapSelRef.current;
+    if (target === "origin") {
+      setEditManualOriginPoint(point);
+      setEditMapSelectionTarget("destination");
+      setEditForm((prev) => {
+        const next = [...prev.routeStops];
+        if (!next.length) return { ...prev, routeStops: ["Localizando…", ""] };
+        next[0] = "Localizando…";
+        return { ...prev, routeStops: next };
+      });
+      reverseGeocodePlaceName(point[0], point[1]).then((name) =>
+        setEditForm((prev) => {
+          const n = [...prev.routeStops];
+          if (n.length) n[0] = name;
+          return { ...prev, routeStops: n };
+        }),
+      );
+      return;
+    }
+    setEditManualDestinationPoint(point);
+    setEditForm((prev) => {
+      const next = [...prev.routeStops];
+      if (next.length < 2) return { ...prev, routeStops: [...next, "Localizando…"] };
+      next[next.length - 1] = "Localizando…";
+      return { ...prev, routeStops: next };
+    });
+    reverseGeocodePlaceName(point[0], point[1]).then((name) =>
+      setEditForm((prev) => {
+        const n = [...prev.routeStops];
+        if (n.length >= 2) n[n.length - 1] = name;
+        return { ...prev, routeStops: n };
+      }),
+    );
+  }, []);
+
+  const clearEditManualMap = () => {
+    setEditManualOriginPoint(null);
+    setEditManualDestinationPoint(null);
+    setEditMapSelectionTarget("origin");
+    if (!editShouldUseManualRoute) {
+      const rt = routeTemplates.find((r) => r.id === editForm.routeId && r.zoneId === editForm.zoneId);
+      if (rt) {
+        setEditForm((prev) => ({ ...prev, routeStops: [rt.origin, rt.destination], routePath: [...rt.path] }));
+      }
+    }
+    if (editShouldUseManualRoute) {
+      toast.message("Mapa limpiado.", { description: "Volvé a marcar origen y destino." });
+    } else {
+      toast.message("Puntos del mapa borrados.", { description: "Se mantiene la plantilla del listado." });
+    }
+  };
+
+  const firstEditStopLabel = editForm.routeStops[0] ?? "";
+  const lastEditStopLabel = editForm.routeStops[editForm.routeStops.length - 1] ?? "";
 
   function focusTripInMap(trip: PlannedTrip) {
     onFocusTripInMap?.(trip.id, trip.zoneId);
@@ -158,19 +331,33 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
   }
 
   function openEditTrip(trip: PlannedTrip) {
+    const matchedRoute = routeTemplates.find(
+      (route) =>
+        route.zoneId === trip.zoneId &&
+        route.origin.trim().toLowerCase() === trip.origin.trim().toLowerCase() &&
+        route.destination.trim().toLowerCase() === trip.destination.trim().toLowerCase(),
+    );
     setEditingTripId(trip.id);
     setEditForm({
       zoneId: trip.zoneId,
+      routeId: matchedRoute?.id ?? "__manual__",
       status: trip.status,
       driver: trip.status === "Sin chofer" ? "" : trip.driver,
       vehiclePlate: trip.status === "Sin chofer" ? "" : trip.vehiclePlate,
       routeStops: trip.routeStops.length >= 2 ? [...trip.routeStops] : [trip.origin, trip.destination],
+      routePath: trip.routePath.length >= 2 ? [...trip.routePath] : [],
       cargo: trip.cargo,
       plan: trip.plan,
       scheduledAt: trip.scheduledAt,
       clientCompany: trip.clientCompany,
       remitoNumber: trip.remitoNumber,
     });
+    setEditManualOriginPoint(null);
+    setEditManualDestinationPoint(null);
+    setEditMapSelectionTarget("origin");
+    setEditResolvedStopPoints([]);
+    setEditPreviewGeoPath([]);
+    editGeocodeCacheRef.current = new Map();
   }
 
   function saveTripEdits() {
@@ -202,12 +389,45 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       }
     }
 
+    const generatedPath = editEffectivePreviewPath.filter(
+      (point) => Number.isFinite(point[0]) && Number.isFinite(point[1]),
+    ) as LatLngExpression[];
+    const canUseGeneratedPath = generatedPath.length >= 2;
+    const useGeneratedManualRoute =
+      canUseGeneratedPath &&
+      (editShouldUseManualRoute ||
+        editForm.routeStops.length > 2 ||
+        Boolean(editManualOriginPoint) ||
+        Boolean(editManualDestinationPoint));
+
+    if (editShouldUseManualRoute && !canUseGeneratedPath) {
+      toast.error("Definí una ruta válida en el mapa o con paradas ubicables.");
+      return;
+    }
+    const hasTemplateRoute = editForm.routeId !== "__manual__" && Boolean(editSelectedRouteTemplate);
+    if (!editShouldUseManualRoute && !useGeneratedManualRoute && !hasTemplateRoute && editForm.routePath.length < 2) {
+      toast.error("Elegí una ruta o usá el mapa.");
+      return;
+    }
+
+    let routePathToSave: LatLngExpression[];
+    if (useGeneratedManualRoute) {
+      routePathToSave = generatedPath;
+    } else if (hasTemplateRoute && editSelectedRouteTemplate?.path?.length) {
+      routePathToSave = [...editSelectedRouteTemplate.path];
+    } else if (editForm.routePath.length >= 2) {
+      routePathToSave = [...editForm.routePath];
+    } else {
+      routePathToSave = generatedPath;
+    }
+
     const updated = updateTrip(editingTripId, {
       zoneId: editForm.zoneId,
       status: nextStatus,
       driver: editForm.driver,
       vehiclePlate: editForm.vehiclePlate,
       routeStops: trimmed,
+      routePath: routePathToSave,
       cargo: editForm.cargo,
       plan: editForm.plan,
       scheduledAt: editForm.scheduledAt,
@@ -424,13 +644,14 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1180px] border-collapse text-xs">
+                <table className="w-full min-w-[1280px] border-collapse text-xs">
                   <thead>
                     <tr className="border-b bg-muted/70 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="px-2 py-1.5 text-left">ID Viaje</th>
                       <th className="px-2 py-1.5 text-left">Fecha</th>
                       <th className="px-2 py-1.5 text-left">Chofer</th>
                       <th className="px-2 py-1.5 text-left">Empresa/Cliente</th>
+                      <th className="px-2 py-1.5 text-left">Nº plan</th>
                       <th className="px-2 py-1.5 text-left">Camión (Tractor)</th>
                       <th className="px-2 py-1.5 text-left">Ruta (paradas)</th>
                       <th className="px-2 py-1.5 text-left">Material/Carga</th>
@@ -443,7 +664,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                     {groupedByZone.map((zoneGroup) => (
                       <Fragment key={`zone-block-${zoneGroup.zoneId}`}>
                         <tr className="bg-gray-800 text-xs font-semibold uppercase tracking-wide text-gray-100">
-                          <td className="px-2 py-1.5" colSpan={10}>
+                          <td className="px-2 py-1.5" colSpan={11}>
                             Zona: {zoneGroup.zoneName}
                           </td>
                         </tr>
@@ -456,6 +677,9 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               <td className="px-2 py-1.5">{formatDateTime(trip.scheduledAt)}</td>
                               <td className="px-2 py-1.5">{trip.driver}</td>
                               <td className="px-2 py-1.5">{trip.clientCompany}</td>
+                              <td className="px-2 py-1.5 font-mono text-[11px] text-foreground" title="Plan de carga o ID correlativo">
+                                {trip.remitoNumber}
+                              </td>
                               <td className="px-2 py-1.5 font-mono">{trip.vehiclePlate}</td>
                               <td className="max-w-[280px] px-2 py-1.5 leading-snug">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="px-2 py-1.5">{trip.cargo}</td>
@@ -564,6 +788,9 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                             <p><span className="font-medium">Chofer:</span> {trip.driver}</p>
                             <p><span className="font-medium">Patente:</span> {trip.vehiclePlate}</p>
                             <p><span className="font-medium">Empresa:</span> {trip.clientCompany}</p>
+                            <p className="font-mono text-[10px] text-muted-foreground">
+                              <span className="font-sans font-medium text-foreground">Nº plan:</span> {trip.remitoNumber}
+                            </p>
                             {activeIncidents > 0 ? (
                               <Button
                                 size="sm"
@@ -622,17 +849,24 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       </Tabs>
 
       <Dialog open={editingTripId !== null} onOpenChange={(open) => !open && setEditingTripId(null)}>
-        <DialogContent className="sm:max-w-3xl">
+        <DialogContent className="z-[1600] max-h-[90vh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Editar viaje {editingTripId}</DialogTitle>
-            <DialogDescription>Actualizá cualquier dato operativo del viaje y guardá los cambios.</DialogDescription>
+            <DialogDescription>
+              Misma lógica de programación de viaje: podés editar paradas, chofer, camión y condiciones operativas.
+            </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-5">
+            <section className="rounded-xl border border-border/80 bg-muted/15 p-4">
+              <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Zona</label>
               <Select
                 value={editForm.zoneId}
-                onValueChange={(value) =>
+                onValueChange={(value) => {
+                  setEditManualOriginPoint(null);
+                  setEditManualDestinationPoint(null);
+                  setEditMapSelectionTarget("origin");
                   setEditForm((prev) => {
                     const keepsCurrent = vehicles.some(
                       (vehicle) =>
@@ -642,13 +876,17 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                       prev.driver.trim() && prev.driver !== "Sin asignar"
                         ? suggestVehiclePlateForDriver(prev.driver.trim(), value)
                         : "";
+                    const firstRouteForZone = routeTemplates.find((route) => route.zoneId === value);
                     return {
                       ...prev,
                       zoneId: value,
+                      routeId: firstRouteForZone?.id ?? "__manual__",
+                      routePath: firstRouteForZone?.path?.length ? [...firstRouteForZone.path] : [],
+                      routeStops: firstRouteForZone ? [firstRouteForZone.origin, firstRouteForZone.destination] : ["", ""],
                       vehiclePlate: keepsCurrent ? prev.vehiclePlate : suggestedPlate,
                     };
-                  })
-                }
+                  });
+                }}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -730,69 +968,176 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2 sm:col-span-2">
-              <label className="text-xs font-medium text-muted-foreground">Paradas en orden</label>
-              <div className="space-y-1">
-                {editForm.routeStops.map((label, idx) => (
-                  <Fragment key={`edit-stop-${idx}`}>
-                    <div className="flex gap-2">
-                      <Input
-                        value={label}
-                        placeholder={idx === 0 ? "Origen" : idx === editForm.routeStops.length - 1 ? "Destino" : "Parada"}
-                        onChange={(event) => {
-                          const v = event.target.value;
-                          setEditForm((prev) => {
-                            const n = [...prev.routeStops];
-                            n[idx] = v;
-                            return { ...prev, routeStops: n };
-                          });
-                        }}
-                      />
-                      {idx > 0 && idx < editForm.routeStops.length - 1 ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="shrink-0"
-                          aria-label="Quitar parada"
-                          onClick={() =>
-                            setEditForm((prev) =>
-                              prev.routeStops.length <= 2
-                                ? prev
-                                : { ...prev, routeStops: prev.routeStops.filter((_, i) => i !== idx) },
-                            )
-                          }
-                        >
-                          ×
-                        </Button>
-                      ) : (
-                        <span className="w-10 shrink-0" />
-                      )}
-                    </div>
-                    {idx < editForm.routeStops.length - 1 ? (
-                      <div className="flex justify-center py-0.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8 rounded-full"
-                          aria-label="Agregar parada"
-                          onClick={() =>
-                            setEditForm((prev) => {
-                              const n = [...prev.routeStops];
-                              n.splice(idx + 1, 0, "Parada");
-                              return { ...prev, routeStops: n };
-                            })
-                          }
-                        >
-                          <Plus className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ) : null}
-                  </Fragment>
-                ))}
               </div>
-            </div>
+            </section>
+            <section aria-label="Ruta" className="rounded-xl border border-border/80 bg-muted/15 p-4 space-y-4">
+              <div className="space-y-2 rounded-lg border border-border/60 bg-background p-3">
+                <div className="overflow-hidden rounded-lg border [&_.leaflet-container]:z-[0] [&_.leaflet-pane]:isolate">
+                  <MapContainer center={editMapCenter} zoom={editSelectedZone?.zoom ?? 6} className="h-48 w-full" scrollWheelZoom>
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
+                      url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                    />
+                    <AutoFitMapBounds path={editEffectivePreviewPath} />
+                    <EditTripRouteMapClick onPick={handleEditManualMapClick} />
+                    {editEffectivePreviewPath.length >= 2 ? (
+                      <Polyline positions={editEffectivePreviewPath} pathOptions={{ color: "#2563eb", weight: 4 }} />
+                    ) : null}
+                    {editDisplayStopPoints.map((point, idx) => (
+                      <Marker
+                        key={`edit-stop-map-${idx}`}
+                        position={point as [number, number]}
+                        icon={
+                          idx === 0
+                            ? tripManualOriginIcon
+                            : idx === editDisplayStopPoints.length - 1
+                              ? tripManualDestIcon
+                              : tripManualMidIcon
+                        }
+                      />
+                    ))}
+                  </MapContainer>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditMapSelectionTarget("origin")}>
+                    Origen en mapa
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditMapSelectionTarget("destination")}>
+                    Destino en mapa
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={clearEditManualMap}>
+                    Limpiar mapa
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Tocá el mapa: {editMapSelectionTarget === "origin" ? "primero origen (azul)" : "después destino (verde)"}.
+                  {editManualOriginPoint ? ` · ${firstEditStopLabel || "Origen"}` : ""}
+                  {editManualDestinationPoint ? ` → ${lastEditStopLabel || "Destino"}` : ""}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="edit-trip-route-select" className="text-xs text-muted-foreground">
+                  {editShouldUseManualRoute ? "Sin rutas sugeridas en esta zona" : "Rutas sugeridas"}
+                </Label>
+                {editShouldUseManualRoute ? (
+                  <p
+                    id="edit-trip-route-select"
+                    className="flex min-h-10 items-center rounded-lg border border-dashed border-muted-foreground/30 bg-background/80 px-3 py-2 text-sm text-muted-foreground"
+                  >
+                    Marcá origen y destino en el mapa.
+                  </p>
+                ) : (
+                  <Select
+                    value={editForm.routeId || "__manual__"}
+                    onValueChange={(value) => {
+                      setEditManualOriginPoint(null);
+                      setEditManualDestinationPoint(null);
+                      setEditMapSelectionTarget("origin");
+                      setEditForm((prev) => {
+                        if (value === "__manual__") return { ...prev, routeId: "__manual__" };
+                        const selectedRoute = routeTemplates.find((route) => route.id === value);
+                        if (!selectedRoute) return prev;
+                        return {
+                          ...prev,
+                          routeId: selectedRoute.id,
+                          routeStops: [selectedRoute.origin, selectedRoute.destination],
+                          routePath: [...selectedRoute.path],
+                        };
+                      });
+                    }}
+                  >
+                    <SelectTrigger id="edit-trip-route-select" className="w-full">
+                      <SelectValue placeholder="Seleccionar ruta sugerida" />
+                    </SelectTrigger>
+                    <SelectContent className="z-[1700]">
+                      <SelectItem value="__manual__">Ruta personalizada</SelectItem>
+                      {editZoneRoutes.map((route) => (
+                        <SelectItem key={route.id} value={route.id}>
+                          {route.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Planificación del viaje</Label>
+                <div className="rounded-xl bg-muted/35 p-2">
+                  <div className="relative space-y-1.5 pl-6">
+                    <span className="absolute left-[11px] top-5 bottom-6 w-px bg-border" />
+                    {editForm.routeStops.map((label, idx) => (
+                      <Fragment key={`edit-stop-${idx}`}>
+                        <div className="relative grid grid-cols-[minmax(0,1fr)_2.25rem_2.25rem] items-center gap-2">
+                          <span
+                            className={`absolute -left-5 inline-flex h-3 w-3 items-center justify-center rounded-full border-2 border-white ${
+                              idx === 0 ? "bg-blue-600" : idx === editForm.routeStops.length - 1 ? "bg-emerald-600" : "bg-slate-900"
+                            }`}
+                          />
+                          <Input
+                            className="h-10 min-w-0 w-full rounded-xl border-0 bg-white shadow-sm"
+                            value={label}
+                            placeholder={idx === 0 ? "Origen" : idx === editForm.routeStops.length - 1 ? "Destino" : "Parada"}
+                            onChange={(event) => {
+                              const v = event.target.value;
+                              setEditForm((prev) => {
+                                const n = [...prev.routeStops];
+                                n[idx] = v;
+                                return { ...prev, routeStops: n };
+                              });
+                            }}
+                          />
+                          <div className="flex justify-end">
+                            {idx > 0 && idx < editForm.routeStops.length - 1 ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-10 w-10 shrink-0 rounded-xl text-muted-foreground"
+                                aria-label="Quitar parada"
+                                onClick={() =>
+                                  setEditForm((prev) =>
+                                    prev.routeStops.length <= 2 ? prev : { ...prev, routeStops: prev.routeStops.filter((_, i) => i !== idx) },
+                                  )
+                                }
+                              >
+                                ×
+                              </Button>
+                            ) : (
+                              <span className="inline-block h-10 w-10 shrink-0" aria-hidden />
+                            )}
+                          </div>
+                          <div className="flex justify-end">
+                            {idx < editForm.routeStops.length - 1 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                className="h-10 w-10 shrink-0 rounded-xl border-dashed"
+                                aria-label="Agregar parada"
+                                onClick={() =>
+                                  setEditForm((prev) => {
+                                    const n = [...prev.routeStops];
+                                    n.splice(idx + 1, 0, "");
+                                    return { ...prev, routeStops: n };
+                                  })
+                                }
+                              >
+                                <Plus className="h-4 w-4" />
+                              </Button>
+                            ) : (
+                              <span className="inline-block h-10 w-10 shrink-0" aria-hidden />
+                            )}
+                          </div>
+                        </div>
+                      </Fragment>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+            <section className="rounded-xl border border-border/80 bg-background p-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Cliente / empresa</label>
@@ -848,6 +1193,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               <label className="text-xs font-medium text-muted-foreground">Condiciones de viaje</label>
               <Textarea value={editForm.plan} onChange={(event) => setEditForm((prev) => ({ ...prev, plan: event.target.value }))} className="min-h-[90px]" />
             </div>
+            </section>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditingTripId(null)}>
@@ -921,6 +1267,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                             <th className="border border-black px-1 py-1 text-left">Fecha</th>
                             <th className="border border-black px-1 py-1 text-left">Chofer</th>
                             <th className="border border-black px-1 py-1 text-left">Empresa</th>
+                            <th className="border border-black px-1 py-1 text-left">Nº plan</th>
                             <th className="border border-black px-1 py-1 text-left">Camión</th>
                             <th className="border border-black px-1 py-1 text-left">Ruta</th>
                             <th className="border border-black px-1 py-1 text-left">Carga</th>
@@ -934,6 +1281,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               <td className="border border-black px-1 py-1">{formatDateTime(trip.scheduledAt)}</td>
                               <td className="border border-black px-1 py-1">{trip.driver}</td>
                               <td className="border border-black px-1 py-1">{trip.clientCompany}</td>
+                              <td className="border border-black px-1 py-1 font-mono">{trip.remitoNumber}</td>
                               <td className="border border-black px-1 py-1">{trip.vehiclePlate}</td>
                               <td className="border border-black px-1 py-1">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="border border-black px-1 py-1">{trip.cargo}</td>

@@ -28,7 +28,18 @@ import {
   setSyncUsers,
   setSyncVehicles,
   SyncAlert,
+  TRIPS_KEY,
 } from "./sync-store";
+
+const TRIP_CREATE_ASSIGN_KEY = "tf_trip_create_assign_next";
+
+/** Alterna creaciones automáticas: asignar chofer libre → siguiente sin chofer. */
+function consumeTripCreateAssignPreference(): boolean {
+  if (typeof window === "undefined") return true;
+  const assign = window.localStorage.getItem(TRIP_CREATE_ASSIGN_KEY) !== "sin";
+  window.localStorage.setItem(TRIP_CREATE_ASSIGN_KEY, assign ? "sin" : "assign");
+  return assign;
+}
 
 export type ZoneId = string;
 type LatLngExpression = [number, number];
@@ -184,6 +195,8 @@ type TripUpdateInput = {
   vehiclePlate: string;
   /** Paradas en orden (≥2). Origen y destino son el primero y el último. */
   routeStops: string[];
+  /** Opcional: ruta base para recalcular el trazado según cantidad de paradas. */
+  routePath?: LatLngExpression[];
   cargo: string;
   plan: string;
   scheduledAt: string;
@@ -478,6 +491,7 @@ function newTripDocumentId(tripId: string) {
 }
 
 function normalizeTripsData(items: PlannedTrip[]) {
+  const demoSeedById = new Map(initialTrips.map((t) => [t.id, t]));
   const UNASSIGNED_DRIVER_LABEL = "Sin asignar";
   const UNASSIGNED_VEHICLE_LABEL = "Sin asignar";
   const driverIdByName: Record<string, string> = {
@@ -511,6 +525,7 @@ function normalizeTripsData(items: PlannedTrip[]) {
     if (stage === "Sin chofer") {
       return {
         ...trip,
+        driverId: undefined,
         driver: UNASSIGNED_DRIVER_LABEL,
         vehiclePlate: UNASSIGNED_VEHICLE_LABEL,
       };
@@ -522,7 +537,21 @@ function normalizeTripsData(items: PlannedTrip[]) {
     };
   };
   return items.map((item) => {
-    const normalizedStatus = normalizeTripStage(item.status, item);
+    let normalizedStatus = normalizeTripStage(item.status, item);
+    const unassigned =
+      !(item.driver ?? "").trim() ||
+      (item.driver ?? "").trim().toLowerCase() === "sin asignar" ||
+      !(item.vehiclePlate ?? "").trim() ||
+      (item.vehiclePlate ?? "").trim().toLowerCase() === "sin asignar" ||
+      (item.vehiclePlate ?? "").trim().toLowerCase() === "patente n/d";
+    const needsDriverForStage =
+      normalizedStatus === "Asignado" ||
+      normalizedStatus === "Aceptado" ||
+      normalizedStatus === "En planta" ||
+      normalizedStatus === "En ruta" ||
+      normalizedStatus === "Reprogramado";
+    if (unassigned && needsDriverForStage) normalizedStatus = "Sin chofer";
+
     const evidencias = normalizeTripDocuments(item.id, item.evidencias);
     const rawStops = Array.isArray((item as { routeStops?: unknown }).routeStops)
       ? (item as { routeStops: string[] }).routeStops.map((s) => String(s).trim()).filter(Boolean)
@@ -536,16 +565,21 @@ function normalizeTripsData(items: PlannedTrip[]) {
     if (routeStops.length >= 2 && Array.isArray(routePath) && routePath.length >= 2) {
       routePath = buildPathForStopCount(routePath, routeStops.length);
     }
+    const seed = demoSeedById.get(item.id);
+    const mergedClient = item.clientCompany?.trim() || seed?.clientCompany?.trim() || "";
+    const mergedRemito = item.remitoNumber?.trim() || seed?.remitoNumber?.trim() || "";
     return {
       ...alignTripWithStage(item, normalizedStatus),
       zoneId: normalizeZoneId(item.zoneId),
       driverId:
-        item.driverId ||
-        driverIdByName[(item.driver ?? "").trim().toLowerCase()] ||
-        undefined,
+        normalizedStatus === "Sin chofer"
+          ? undefined
+          : item.driverId ||
+            driverIdByName[(item.driver ?? "").trim().toLowerCase()] ||
+            undefined,
       status: normalizedStatus,
-      clientCompany: item.clientCompany?.trim() || "Cliente general",
-      remitoNumber: item.remitoNumber?.trim() || `REM-${item.id}`,
+      clientCompany: mergedClient || "Cliente general",
+      remitoNumber: mergedRemito || `REM-${item.id}`,
       evidencias,
       origin,
       destination,
@@ -699,6 +733,14 @@ const initialInvoices: DriverInvoice[] = [
 
 function buildId(prefix: string, count: number) {
   return `${prefix}-${String(count).padStart(2, "0")}`;
+}
+
+function normalizeComparableName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 const initialRouteTemplates: RouteTemplate[] = [
@@ -1014,6 +1056,50 @@ const initialTrips: PlannedTrip[] = [
     timeline: [],
     evidencias: [],
   },
+  {
+    id: "VJ-1013",
+    zoneId: "zona-bsas",
+    driverId: "driver-juan",
+    driver: "Juan Pérez",
+    vehiclePlate: "AB123CD",
+    origin: "Buenos Aires",
+    destination: "La Plata",
+    routeStops: ["Buenos Aires", "Avellaneda", "La Plata"],
+    routePath: initialRouteTemplates[0].path,
+    progress: 0,
+    status: "Asignado",
+    cargo: "Acero estructural - 21 toneladas",
+    plan: "Salida 06:30, control de balanza en peaje Hudson, entrega en depósito principal.",
+    scheduledAt: "2026-05-03T06:30",
+    clientCompany: "SIDERSA",
+    remitoNumber: "SRD9123",
+    timeline: [],
+    evidencias: [],
+  },
+  {
+    id: "VJ-1014",
+    zoneId: "zona-bsas",
+    driverId: "driver-juan",
+    driver: "Juan Pérez",
+    vehiclePlate: "AB123CD",
+    origin: "Buenos Aires",
+    destination: "Córdoba",
+    routeStops: ["Buenos Aires", "Rosario", "Córdoba"],
+    routePath: [
+      [-34.6037, -58.3816],
+      [-32.9468, -60.6393],
+      [-31.4167, -64.1833],
+    ],
+    progress: 0,
+    status: "Asignado",
+    cargo: "Referencia SIDERSA — acero en bobinas",
+    plan: "Ejemplo de datos: cliente SIDERSA con plan de carga provisto por la empresa (7 caracteres alfanuméricos). No usar ID AUTO-* para este cliente.",
+    scheduledAt: "2026-05-04T08:00",
+    clientCompany: "SIDERSA",
+    remitoNumber: "DEMO123",
+    timeline: [],
+    evidencias: [],
+  },
 ];
 
 const initialSyncAlerts: SyncAlert[] = realtimeAlerts.map((alert) => ({
@@ -1137,11 +1223,11 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
       }
     };
     const onStorage = (event: StorageEvent) => {
-      if (event.key === "tf_sync_trips_v1") syncFromStorage();
+      if (event.key === TRIPS_KEY) syncFromStorage();
     };
     const onInternal = (event: Event) => {
       const detail = (event as CustomEvent<{ key?: string }>).detail;
-      if (detail?.key === "tf_sync_trips_v1") syncFromStorage();
+      if (detail?.key === TRIPS_KEY) syncFromStorage();
     };
     window.addEventListener("storage", onStorage);
     window.addEventListener("tf-sync-store-updated", onInternal);
@@ -1299,11 +1385,10 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         const stops = input.routeStops.map((s) => String(s).trim()).filter(Boolean);
         if (stops.length < 2) return null;
 
-        const driver = input.driverId ? users.find((item) => item.id === input.driverId && item.role === "Chofer") : undefined;
-        const vehicle = input.vehicleId ? vehicles.find((item) => item.id === input.vehicleId) : undefined;
-        if ((input.driverId && !driver) || (input.vehicleId && !vehicle)) return null;
-        const hasAssignment = Boolean(driver && vehicle);
-        if ((driver && !vehicle) || (!driver && vehicle)) return null;
+        const manualDriver = input.driverId ? users.find((item) => item.id === input.driverId && item.role === "Chofer") : undefined;
+        const manualVehicle = input.vehicleId ? vehicles.find((item) => item.id === input.vehicleId) : undefined;
+        if ((input.driverId && !manualDriver) || (input.vehicleId && !manualVehicle)) return null;
+        if ((manualDriver && !manualVehicle) || (!manualDriver && manualVehicle)) return null;
         if (!input.cargo.trim() || !input.plan.trim()) return null;
 
         const clientCompany = input.clientCompany.trim();
@@ -1355,12 +1440,92 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         } else {
           remitoNumber = generateAutoLoadPlanReference(sequence);
         }
+        const activeTrips = trips.filter((trip) => trip.status !== "Entregado" && trip.status !== "Cancelado");
+        const occupiedDriverIds = new Set(activeTrips.map((trip) => trip.driverId).filter(Boolean));
+        const occupiedDriverNames = new Set(
+          activeTrips.map((trip) => normalizeComparableName(trip.driver)).filter((name) => Boolean(name && name !== "sin asignar")),
+        );
+        const occupiedVehiclePlates = new Set(
+          activeTrips
+            .map((trip) => trip.vehiclePlate.trim().toUpperCase())
+            .filter((plate) => Boolean(plate && plate !== "SIN ASIGNAR" && plate !== "PATENTE N/D")),
+        );
+
+        const wantsAutomaticDriver = !manualDriver && !manualVehicle;
+        const prefersAutoAssign = wantsAutomaticDriver && consumeTripCreateAssignPreference();
+
+        let autoCreatedDriver: AppUser | null = null;
+        let autoDriver: AppUser | undefined;
+
+        if (prefersAutoAssign) {
+          const activeChoferes = users.filter((user) => user.role === "Chofer" && user.status === "Activo");
+          const availableChoferes = activeChoferes.filter(
+            (user) => !occupiedDriverIds.has(user.id) && !occupiedDriverNames.has(normalizeComparableName(user.name)),
+          );
+          const zoneAvailableChoferes = availableChoferes.filter((user) => user.zoneId === input.zoneId);
+          autoDriver = zoneAvailableChoferes[0];
+
+          if (!autoDriver) {
+            const nextDriverIndex = activeChoferes.length + 1;
+            const autoDriverName = `Chofer Auto ${nextDriverIndex}`;
+            autoCreatedDriver = {
+              id: `DRV-AUTO-${Date.now().toString(36).toUpperCase()}`,
+              name: autoDriverName,
+              email: `chofer.auto.${nextDriverIndex}@transportefighera.com`,
+              role: "Chofer",
+              status: "Activo",
+              zoneId: input.zoneId,
+            };
+            autoDriver = autoCreatedDriver;
+            updateUsers((prev) => [autoCreatedDriver!, ...prev]);
+            const choferDocumentTypes = userDocumentTypesByRole.Chofer;
+            const now = new Date();
+            updateDocuments((prev) => [
+              ...choferDocumentTypes.map((documentType, index) => {
+                const expires = new Date(now);
+                expires.setMonth(expires.getMonth() + 9 + index);
+                return {
+                  id: `DOC-${Date.now().toString(36)}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+                  entityType: "user" as const,
+                  entityId: autoCreatedDriver!.id,
+                  documentType,
+                  expiresAt: expires.toISOString().slice(0, 10),
+                  status: "Vigente" as const,
+                  notes: "Alta automática para disponibilidad operativa.",
+                  fileName: `${documentType.toLowerCase().replace(/\s+/g, "_")}_${autoCreatedDriver!.id.toLowerCase()}.pdf`,
+                  fileType: "application/pdf",
+                  fileSizeKb: 420 + index * 12,
+                  uploadedAt: new Date().toISOString().slice(0, 16),
+                };
+              }),
+              ...prev,
+            ]);
+          }
+        }
+
+        const activeCamiones = vehicles.filter((vehicle) => vehicle.type === "Camión" && vehicle.status === "Activo");
+        const availableZoneCamiones = activeCamiones.filter(
+          (vehicle) => vehicle.zoneId === input.zoneId && !occupiedVehiclePlates.has(vehicle.plate.trim().toUpperCase()),
+        );
+        const availableAnyCamion = activeCamiones.filter(
+          (vehicle) => !occupiedVehiclePlates.has(vehicle.plate.trim().toUpperCase()),
+        );
+        const autoVehicle =
+          availableZoneCamiones[0] ??
+          availableAnyCamion[0] ??
+          activeCamiones.find((vehicle) => vehicle.zoneId === input.zoneId) ??
+          activeCamiones[0];
+
+        const resolvedDriver = manualDriver ?? autoDriver;
+        const hasAssignment = Boolean(resolvedDriver);
+        const resolvedVehicle = manualVehicle ?? (hasAssignment ? autoVehicle : undefined);
+
         const newTrip: PlannedTrip = {
           id: `VJ-${sequence}`,
           zoneId: input.zoneId,
-          driverId: hasAssignment ? driver?.id : undefined,
-          driver: hasAssignment ? (driver?.name ?? "Sin asignar") : "Sin asignar",
-          vehiclePlate: hasAssignment ? (vehicle?.plate ?? "Sin asignar") : "Sin asignar",
+          driverId: hasAssignment ? resolvedDriver?.id : undefined,
+          driver: hasAssignment ? (resolvedDriver?.name ?? "Sin asignar") : "Sin asignar",
+          vehiclePlate: resolvedVehicle?.plate ?? "Sin asignar",
           origin,
           destination,
           routeStops: stops,
@@ -1377,7 +1542,11 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         };
         updateTrips((prev) => [newTrip, ...prev]);
         toast.message(`Viaje ${newTrip.id} creado`, {
-          description: hasAssignment ? "Esperando aceptación del chofer..." : "Viaje creado sin chofer. Podés asignarlo al editar.",
+          description: hasAssignment
+            ? autoCreatedDriver
+              ? `Se creó ${autoCreatedDriver.name} y se asignó automáticamente al viaje.`
+              : "Chofer asignado automáticamente en función de disponibilidad."
+            : "Viaje creado sin chofer. Podés asignarlo al editar.",
         });
         return newTrip;
       },
@@ -1412,11 +1581,17 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           input.status === "Sin chofer" ? "Sin asignar" : trimmedDriver || "Chofer N/D";
         const normalizedVehicle =
           input.status === "Sin chofer" ? "Sin asignar" : trimmedPlate || "Patente N/D";
-        const resolvedDriverId = users.find((u) => u.role === "Chofer" && u.name === normalizedDriver)?.id;
+        const resolvedDriverId = users.find(
+          (u) => u.role === "Chofer" && normalizeComparableName(u.name) === normalizeComparableName(normalizedDriver),
+        )?.id;
 
-        let routePath = target.routePath;
-        if (stops.length >= 2 && target.routePath.length >= 2) {
-          routePath = buildPathForStopCount(target.routePath, stops.length);
+        const nextRoutePathCandidate = (input.routePath ?? []).filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+        const nextRoutePath =
+          nextRoutePathCandidate.length >= 2 ? (nextRoutePathCandidate as LatLngExpression[]) : target.routePath;
+
+        let routePath = nextRoutePath;
+        if (stops.length >= 2 && nextRoutePath.length >= 2) {
+          routePath = buildPathForStopCount(nextRoutePath, stops.length);
         }
 
         const updatedTrip: PlannedTrip = {

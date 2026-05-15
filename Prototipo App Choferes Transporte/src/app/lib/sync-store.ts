@@ -58,8 +58,8 @@ export type SyncAlert = {
   resolvedAt?: string;
 };
 
-export const TRIPS_KEY = "tf_sync_trips_v1";
-export const ALERTS_KEY = "tf_sync_alerts_v2";
+export const TRIPS_KEY = "tf_sync_trips_v2";
+export const ALERTS_KEY = "tf_sync_alerts_v3";
 export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
 export const DOCUMENTS_KEY = "tf_sync_documents_v1";

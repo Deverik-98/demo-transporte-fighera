@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { FileSpreadsheet, Loader2, Play } from "lucide-react";
 import { Button } from "../ui/button";
+import { cn } from "../ui/utils";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "../ui/dialog";
 import { Label } from "../ui/label";
 import { Badge } from "../ui/badge";
@@ -248,8 +249,8 @@ export function TripImportModal({ buttonClassName, onTripsImported }: TripImport
   return (
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="outline" className={buttonClassName}>
-          <FileSpreadsheet className="mr-2 h-4 w-4" />
+        <Button variant="outline" size="lg" className={cn("gap-2", buttonClassName)}>
+          <FileSpreadsheet className="h-4 w-4" />
           Importar viajes
         </Button>
       </DialogTrigger>

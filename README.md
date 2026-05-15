@@ -34,8 +34,10 @@ npm run build --prefix "Prototipo App Choferes Transporte"
 Servidor unificado local:
 
 ```bash
-node serve-unified-prototypes.js
+node serve-unified-prototypes.cjs
 ```
+
+(En la raíz del repo hay `"type": "module"`; el servidor unificado usa CommonJS y por eso el archivo es `.cjs`.)
 
 Abrir:
 

@@ -20,6 +20,7 @@ function sendFile(res, filePath, contentType = "text/html") {
 }
 
 function contentTypeByExt(filePath) {
+  if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
   if (filePath.endsWith(".js")) return "application/javascript; charset=utf-8";
   if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
   if (filePath.endsWith(".json")) return "application/json; charset=utf-8";
@@ -68,8 +69,20 @@ function serveSharedAsset(reqPath, res) {
 const server = http.createServer((req, res) => {
   const url = req.url || "/";
 
-  if (url === "/") {
+  if (url === "/" || url.startsWith("/?")) {
     res.writeHead(302, { Location: "/admin/" });
+    res.end();
+    return;
+  }
+
+  if (url === "/admin" || url.startsWith("/admin?")) {
+    res.writeHead(302, { Location: "/admin/" });
+    res.end();
+    return;
+  }
+
+  if (url === "/mobile" || url.startsWith("/mobile?")) {
+    res.writeHead(302, { Location: "/mobile/" });
     res.end();
     return;
   }

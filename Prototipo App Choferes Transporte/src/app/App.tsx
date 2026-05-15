@@ -31,15 +31,15 @@ import {
   Download,
   Trash2
 } from 'lucide-react';
-import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet';
+import { MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet';
 import { LatLngExpression, divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { toast } from 'sonner';
-import { TripStage, TripStageStepper } from './components/modules/TripStageStepper';
-import { appendCriticalAlert, getSyncDocuments, getSyncTrips, getSyncUsers, getSyncVehicles, requestGlobalDemoReset, setSyncTrips, SyncTrip } from './lib/sync-store';
-import { formatTripRouteStops } from './lib/trip-route';
+import type { TripStage } from './components/modules/TripStageStepper';
+import { appendCriticalAlert, getSyncDocuments, getSyncTrips, getSyncUsers, getSyncVehicles, requestGlobalDemoReset, setSyncTrips, SyncTrip, TRIPS_KEY } from './lib/sync-store';
+import { buildPathForStopCount, formatTripRouteStops } from './lib/trip-route';
 
-type TripStatus = 'asignado' | 'aceptado' | 'en-planta' | 'en-ruta' | 'completado' | 'cancelado';
+type TripStatus = 'sin-chofer' | 'asignado' | 'aceptado' | 'en-planta' | 'en-ruta' | 'completado' | 'cancelado';
 type Screen = 'ruta' | 'historial' | 'rrhh' | 'perfil';
 type RouteEventType = 'incidente' | 'retraso' | 'desvio' | 'parada';
 type ExpenseCategory = 'peajes' | 'combustible' | 'gomeria' | 'fitosanitario' | 'otros';
@@ -84,6 +84,10 @@ interface Trip {
   eta: string;
   plan: string;
   estado: TripStatus;
+  /** Cliente / empresa (sincronizado con panel). */
+  clientCompany?: string;
+  /** Plan de carga manual o ID AUTO-* (sincronizado con panel). */
+  remitoNumber?: string;
   timeline: Array<{ timestamp: string; descripcion: string }>;
   alertas: Array<{ tipo: RouteEventType; descripcion: string; timestamp: string }>;
   routePath: LatLngExpression[];
@@ -135,6 +139,15 @@ type SyncedUserRecord = {
   zoneId?: string;
 };
 
+const STAGE_FLOW: Array<{ id: TripStage; label: string }> = [
+  { id: 'aceptado', label: 'Aceptar viaje' },
+  { id: 'balanza', label: 'Llegada a balanza' },
+  { id: 'inicio-carga', label: 'Inicio de carga' },
+  { id: 'fin-carga', label: 'Fin de carga' },
+  { id: 'en-ruta', label: 'En ruta' },
+  { id: 'llegada', label: 'Llegada a destino' },
+];
+
 function getPositionByProgress(path: LatLngExpression[], progress: number): LatLngExpression {
   if (path.length < 2) return path[0];
   const pct = Math.max(0, Math.min(progress, 100)) / 100;
@@ -154,6 +167,38 @@ function tripIcon(plate: string) {
     iconSize: [72, 24],
     iconAnchor: [12, 12]
   });
+}
+
+function routeStopIcon(kind: 'start' | 'mid' | 'end', order: number) {
+  const bg = kind === 'start' ? '#2563eb' : kind === 'end' ? '#059669' : '#0f172a';
+  return divIcon({
+    className: 'mobile-route-stop-marker',
+    html: `<div style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;background:${bg};border:2px solid #fff;border-radius:999px;color:#fff;font-size:10px;font-weight:700;box-shadow:0 2px 8px rgba(15,23,42,.35);">${order}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
+function getTripStops(trip: Pick<Trip, 'routeStops' | 'origen' | 'destino'>): string[] {
+  const list = Array.isArray(trip.routeStops)
+    ? trip.routeStops.map((stop) => String(stop).trim()).filter(Boolean)
+    : [];
+  if (list.length >= 2) return list;
+  return [trip.origen, trip.destino].map((stop) => String(stop ?? '').trim()).filter(Boolean);
+}
+
+function RouteBoundsController({ points }: { points: LatLngExpression[] }) {
+  const map = useMap();
+  useEffect(() => {
+    const valid = points.filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1])) as [number, number][];
+    if (!valid.length) return;
+    if (valid.length === 1) {
+      map.setView(valid[0], 11, { animate: true });
+      return;
+    }
+    map.fitBounds(valid, { padding: [28, 28], maxZoom: 12, animate: true });
+  }, [map, points]);
+  return null;
 }
 
 function normalizeDriverName(value: string) {
@@ -215,20 +260,24 @@ function mapTripToSync(trip: Trip): SyncTrip {
     routePath: trip.routePath,
     progress: trip.progress,
     status:
-      trip.estado === 'asignado'
-        ? 'Asignado'
-        : trip.estado === 'aceptado'
-          ? 'Aceptado'
-          : trip.estado === 'en-ruta'
-            ? 'En ruta'
-            : trip.estado === 'completado'
-              ? 'Entregado'
-              : trip.estado === 'cancelado'
-                ? 'Cancelado'
-                : 'En planta',
+      trip.estado === 'sin-chofer'
+        ? 'Sin chofer'
+        : trip.estado === 'asignado'
+          ? 'Asignado'
+          : trip.estado === 'aceptado'
+            ? 'Aceptado'
+            : trip.estado === 'en-ruta'
+              ? 'En ruta'
+              : trip.estado === 'completado'
+                ? 'Entregado'
+                : trip.estado === 'cancelado'
+                  ? 'Cancelado'
+                  : 'En planta',
     cargo: trip.carga,
     plan: trip.plan,
     scheduledAt: trip.fechaProgramada,
+    clientCompany: trip.clientCompany?.trim() || undefined,
+    remitoNumber: trip.remitoNumber?.trim() || undefined,
     timeline: trip.timeline,
     evidencias: normalizeTripDocs(trip.id, trip.evidencias)
   };
@@ -258,17 +307,21 @@ function mapSyncToMobileTrip(syncTrip: SyncTrip): Trip {
     eta: "3h 30m",
     plan: syncTrip.plan,
     estado:
-      normalizedStatus === 'Asignado' || normalizedStatus === 'Sin chofer' || normalizedStatus === 'Reprogramado'
-        ? 'asignado'
-        : normalizedStatus === 'Aceptado'
-          ? 'aceptado'
-          : normalizedStatus === 'En ruta'
-            ? 'en-ruta'
-            : normalizedStatus === 'Entregado'
-              ? 'completado'
-              : normalizedStatus === 'Cancelado'
-                ? 'cancelado'
-                : 'en-planta',
+      normalizedStatus === 'Sin chofer'
+        ? 'sin-chofer'
+        : normalizedStatus === 'Asignado' || normalizedStatus === 'Reprogramado'
+          ? 'asignado'
+          : normalizedStatus === 'Aceptado'
+            ? 'aceptado'
+            : normalizedStatus === 'En ruta'
+              ? 'en-ruta'
+              : normalizedStatus === 'Entregado'
+                ? 'completado'
+                : normalizedStatus === 'Cancelado'
+                  ? 'cancelado'
+                  : 'en-planta',
+    clientCompany: syncTrip.clientCompany?.trim() || 'Cliente general',
+    remitoNumber: syncTrip.remitoNumber?.trim() || `REM-${syncTrip.id}`,
     timeline: syncTrip.timeline && syncTrip.timeline.length ? syncTrip.timeline : [{ timestamp: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }), descripcion: 'Viaje sincronizado desde panel.' }],
     alertas: [],
     routePath: syncTrip.routePath,
@@ -500,6 +553,42 @@ export default function App() {
     [currentDriverId, currentDriverName, trips]
   );
 
+  const openHistorialPrintSheet = () => {
+    const esc = (s: string) =>
+      String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    const list = trips.filter(
+      (trip) => isTripForCurrentDriver(trip) && (trip.estado === 'completado' || trip.estado === 'cancelado')
+    );
+    const rows = list
+      .map(
+        (trip) =>
+          `<tr><td>${esc(trip.id)}</td><td>${esc(trip.fechaProgramada)}</td><td>${esc(trip.clientCompany ?? '')}</td><td class="mono">${esc(
+            trip.remitoNumber ?? ''
+          )}</td><td>${esc(trip.vehiclePlate)}</td><td>${esc(
+            formatTripRouteStops(trip.routeStops, trip.origen, trip.destino)
+          )}</td><td>${esc(trip.estado === 'completado' ? 'Entregado' : 'Cancelado')}</td></tr>`
+      )
+      .join('');
+    const table = list.length
+      ? `<table><thead><tr><th>ID</th><th>Fecha</th><th>Cliente</th><th>Nº plan</th><th>Camión</th><th>Ruta</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<p>Sin viajes en historial.</p>';
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Historial viajes</title><style>body{font:12px system-ui;color:#000;padding:16px}.mono{font-family:ui-monospace,monospace}table{border-collapse:collapse;width:100%}td,th{border:1px solid #000;padding:6px;text-align:left}</style></head><body><h2>Transportes Fighera — Historial</h2><p>Chofer: ${esc(
+      currentDriverName
+    )}</p>${table}<script>addEventListener('load',function(){setTimeout(function(){print();},300);});</script></body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) {
+      toast.error('No se pudo abrir la ventana de impresión. Revisá el bloqueo de popups.');
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  };
+
   useEffect(() => {
     const synced = getSyncTrips();
     setSyncedUserRecords(getSyncUsers<SyncedUserRecord>());
@@ -519,7 +608,7 @@ export default function App() {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key && event.key !== 'tf_sync_trips_v1') return;
+      if (event.key && event.key !== TRIPS_KEY) return;
       const synced = getSyncTrips();
       if (synced.length) {
         setTrips(synced.map(mapSyncToMobileTrip));
@@ -636,6 +725,28 @@ export default function App() {
   const activeTrip = useMemo(
     () => trips.find((trip) => trip.id === activeTripId && trip.estado !== 'completado' && trip.estado !== 'cancelado') ?? null,
     [activeTripId, trips]
+  );
+  const activeTripStops = useMemo(
+    () => (activeTrip ? getTripStops(activeTrip) : []),
+    [activeTrip]
+  );
+  const activeTripStopPoints = useMemo(() => {
+    if (!activeTrip || !activeTripStops.length) return [] as LatLngExpression[];
+    if (!Array.isArray(activeTrip.routePath) || activeTrip.routePath.length < 2) return activeTrip.routePath;
+    return buildPathForStopCount(activeTrip.routePath, Math.max(2, activeTripStops.length));
+  }, [activeTrip, activeTripStops]);
+  const activeTripCurrentStopIndex = useMemo(() => {
+    if (!activeTripStops.length) return 0;
+    const idx = Math.round((Math.max(0, Math.min(activeTrip?.progress ?? 0, 100)) / 100) * (activeTripStops.length - 1));
+    return Math.max(0, Math.min(activeTripStops.length - 1, idx));
+  }, [activeTrip?.progress, activeTripStops]);
+  const activeTripCurrentStageIndex = useMemo(
+    () => STAGE_FLOW.findIndex((step) => step.id === activeTrip?.stage),
+    [activeTrip?.stage]
+  );
+  const activeTripNextStage = useMemo(
+    () => (activeTripCurrentStageIndex >= 0 ? STAGE_FLOW[activeTripCurrentStageIndex + 1] ?? null : null),
+    [activeTripCurrentStageIndex]
   );
 
   const pendingTrips = useMemo(
@@ -1298,6 +1409,11 @@ export default function App() {
                           <div className="text-sm text-gray-700 space-y-2 mb-4">
                             <p><span className="font-semibold">Camión:</span> {trip.vehiclePlate}</p>
                             <p><span className="font-semibold">Ruta:</span> {formatTripRouteStops(trip.routeStops, trip.origen, trip.destino)}</p>
+                            <p><span className="font-semibold">Cliente:</span> {trip.clientCompany ?? '—'}</p>
+                            <p>
+                              <span className="font-semibold">Nº plan:</span>{' '}
+                              <span className="font-mono text-xs">{trip.remitoNumber ?? '—'}</span>
+                            </p>
                             <p><span className="font-semibold">Carga:</span> {trip.carga}</p>
                             <p><span className="font-semibold">Distancia:</span> {trip.distancia} · ETA {trip.eta}</p>
                             <p><span className="font-semibold">Plan:</span> {trip.plan}</p>
@@ -1320,7 +1436,7 @@ export default function App() {
                                 Aceptar viaje
                               </button>
                             )}
-                            {!isInProgress && trip.estado !== 'asignado' && (
+                            {!isInProgress && trip.estado !== 'asignado' && trip.estado !== 'sin-chofer' && (
                               <button
                                 onClick={() => handleStartTrip(trip.id)}
                                 disabled={!canStartNow}
@@ -1369,16 +1485,70 @@ export default function App() {
                           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
                           url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
                         />
-                        <Polyline positions={activeTrip.routePath} pathOptions={{ color: '#1d4ed8', weight: 5, opacity: 0.85 }} />
+                        <RouteBoundsController points={activeTrip.routePath} />
+                        <Polyline positions={activeTrip.routePath} pathOptions={{ color: '#0f172a', weight: 8, opacity: 0.22 }} />
+                        <Polyline positions={activeTrip.routePath} pathOptions={{ color: '#1d4ed8', weight: 5, opacity: 0.9 }} />
+                        {activeTripStopPoints.map((point, index) => {
+                          const kind = index === 0 ? 'start' : index === activeTripStopPoints.length - 1 ? 'end' : 'mid';
+                          return (
+                            <Marker
+                              key={`${activeTrip.id}-stop-${index}`}
+                              position={point}
+                              icon={routeStopIcon(kind, index + 1)}
+                            />
+                          );
+                        })}
                         <Marker position={getPositionByProgress(activeTrip.routePath, activeTrip.progress)} icon={tripIcon(activeTrip.vehiclePlate)} />
                       </MapContainer>
                     </div>
 
                     <div className="px-4 py-3 bg-slate-50 border-t border-slate-200">
-                      <TripStageStepper
-                        currentStage={activeTrip.stage}
-                        onAdvance={(nextStage) => handleAdvanceStage(activeTrip.id, nextStage)}
-                      />
+                      <div className="mb-2 rounded-xl border border-slate-200 bg-white p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <h4 className="text-sm font-semibold text-slate-800">Planificación del viaje</h4>
+                          <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">
+                            Parada {activeTripCurrentStopIndex + 1} / {Math.max(2, activeTripStops.length)}
+                          </span>
+                        </div>
+                        <div className="space-y-2">
+                          {activeTripStops.map((stop, index) => {
+                            const isCurrent = index === activeTripCurrentStopIndex;
+                            const isDone = index < activeTripCurrentStopIndex;
+                            const markerTone = index === 0 ? 'bg-blue-600' : index === activeTripStops.length - 1 ? 'bg-emerald-600' : 'bg-slate-700';
+                            return (
+                              <div key={`${activeTrip.id}-stop-plan-${index}`} className="flex items-start gap-2">
+                                <div className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white ${isDone ? 'bg-blue-600' : markerTone}`}>
+                                  {index + 1}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className={`text-xs ${isCurrent ? 'font-semibold text-slate-900' : 'text-slate-700'}`}>{stop}</p>
+                                  <p className="text-[11px] text-slate-500">
+                                    {index === 0
+                                      ? 'Origen'
+                                      : index === activeTripStops.length - 1
+                                        ? 'Destino'
+                                        : 'Parada intermedia'}
+                                  </p>
+                                </div>
+                                {isCurrent ? (
+                                  <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                                    Actual
+                                  </span>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {activeTripNextStage ? (
+                          <button
+                            type="button"
+                            onClick={() => handleAdvanceStage(activeTrip.id, activeTripNextStage.id)}
+                            className="mt-3 w-full rounded-lg bg-blue-500 py-2 text-xs font-semibold text-white hover:bg-blue-600"
+                          >
+                            Registrar: {activeTripNextStage.label}
+                          </button>
+                        ) : null}
+                      </div>
                       <div className="mb-2 rounded-lg border border-slate-200 bg-white p-2">
                         <div className="mb-2 flex items-center justify-between">
                           <p className="text-xs font-semibold text-slate-700">Documentos del Viaje ({activeTrip.evidencias.length})</p>
@@ -1427,6 +1597,10 @@ export default function App() {
                         <button onClick={() => handleAcceptTrip(activeTrip.id)} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors">
                           Aceptar viaje
                         </button>
+                      ) : activeTrip.estado === 'sin-chofer' ? (
+                        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          Este viaje aún no tiene chofer asignado. Coordiná con operaciones desde el panel administrativo.
+                        </p>
                       ) : activeTrip.estado !== 'en-ruta' && activeTrip.estado !== 'completado' ? (
                         <>
                           <button onClick={() => handleStartTrip(activeTrip.id)} disabled={!canStartTrip(activeTrip.id)} className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white py-3.5 rounded-xl text-sm font-semibold transition-colors">
@@ -1500,7 +1674,16 @@ export default function App() {
               exit={{ opacity: 0, x: 20 }}
               className="p-4"
             >
-              <h2 className="text-2xl font-bold mb-4 text-gray-800">Historial de Viajes</h2>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-2xl font-bold text-gray-800">Historial de Viajes</h2>
+                <button
+                  type="button"
+                  onClick={openHistorialPrintSheet}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm"
+                >
+                  Tabla imprimible / PDF
+                </button>
+              </div>
 
               {tripHistory.length === 0 ? (
                 <div className="bg-white rounded-xl shadow p-4 text-sm text-gray-600">
@@ -1544,7 +1727,16 @@ export default function App() {
                                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
                                       url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
                                     />
+                                    <RouteBoundsController points={trip.routePath} />
+                                    <Polyline positions={trip.routePath} pathOptions={{ color: '#0f172a', weight: 7, opacity: 0.22 }} />
                                     <Polyline positions={trip.routePath} pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.9 }} />
+                                    {buildPathForStopCount(trip.routePath, Math.max(2, getTripStops(trip).length)).map((point, index, arr) => (
+                                      <Marker
+                                        key={`${trip.id}-history-stop-${index}`}
+                                        position={point}
+                                        icon={routeStopIcon(index === 0 ? 'start' : index === arr.length - 1 ? 'end' : 'mid', index + 1)}
+                                      />
+                                    ))}
                                     <Marker position={getPositionByProgress(trip.routePath, trip.progress)} icon={tripIcon(trip.vehiclePlate)} />
                                   </MapContainer>
                                 </div>

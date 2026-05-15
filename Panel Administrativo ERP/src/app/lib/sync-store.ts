@@ -78,8 +78,9 @@ export function filterAlertsByFleetDocumentationPolicy<
   });
 }
 
-export const TRIPS_KEY = "tf_sync_trips_v1";
-export const ALERTS_KEY = "tf_sync_alerts_v2";
+/** v2: seed con clientes principales (SIDERSA/Acindar/CIPLAR) y planes de carga manuales; migrar desde v1 vaciando esta clave. */
+export const TRIPS_KEY = "tf_sync_trips_v2";
+export const ALERTS_KEY = "tf_sync_alerts_v3";
 export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
 export const DOCUMENTS_KEY = "tf_sync_documents_v1";
@@ -160,10 +161,24 @@ export function resolveSyncAlert(alertId: string) {
   setSyncAlerts(next);
 }
 
+/** Si la alerta tiene `tripId`, solo aplica a ese viaje. Sin `tripId`, se cruza por patente (alertas legacy / sin viaje). */
+export function alertBelongsToOperationalTrip(
+  alert: Pick<SyncAlert, "tripId" | "vehiclePlate">,
+  tripId: string,
+  tripVehiclePlate: string,
+): boolean {
+  const tid = alert.tripId?.trim();
+  if (tid) return tid === tripId;
+  const plate = tripVehiclePlate.trim().toUpperCase();
+  if (!plate || plate === "SIN ASIGNAR" || plate === "PATENTE N/D") return false;
+  const ap = alert.vehiclePlate?.trim().toUpperCase() ?? "";
+  return Boolean(ap && ap === plate);
+}
+
 export function resolveSyncAlertsByTrip(tripId: string, vehiclePlate?: string) {
   const current = getSyncAlerts();
   const next = current.map((alert) =>
-    alert.status === "Activa" && (alert.tripId === tripId || (!!vehiclePlate && alert.vehiclePlate === vehiclePlate))
+    alert.status === "Activa" && alertBelongsToOperationalTrip(alert, tripId, vehiclePlate ?? "")
       ? {
           ...alert,
           status: "Resuelta" as const,

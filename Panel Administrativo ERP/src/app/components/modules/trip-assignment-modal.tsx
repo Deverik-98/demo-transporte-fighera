@@ -643,7 +643,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                   Condiciones de viaje / Observaciones
                 </Label>
                 <p id="trip-conditions-notes-hint" className="mt-1 text-xs leading-snug text-muted-foreground">
-                  Podés anotar condiciones del viaje, camión escalable, tarifas, ventanas horarias, contacto, etc.
+                  Podés anotar condiciones del viaje, camión, tarifas, ventanas horarias, contacto, etc.
                 </p>
               </div>
               <Textarea

@@ -30,6 +30,7 @@ import { useTheme } from "next-themes";
 import { OperationsDataProvider, useOperationsData, UserRole } from "./lib/operations-data";
 import { Toaster } from "./components/ui/sonner";
 import { canAccess } from "./components/auth/RbacGuard";
+import { BrandLogo } from "./components/brand/BrandLogo";
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -127,10 +128,10 @@ function AppContent() {
           >
             {sidebarCollapsed ? <Menu className="h-5 w-5" /> : <X className="h-5 w-5" />}
           </Button>
-          <div className="flex items-center gap-2">
-            <Truck className="h-6 w-6 text-primary" />
-            <h1 className="text-xl">Transporte Fighera</h1>
-            <Badge variant="secondary" className="ml-2">ERP Logístico</Badge>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <BrandLogo variant="compact" priority className="shrink-0" />
+            <h1 className="truncate text-xl font-semibold">Transporte Fighera</h1>
+            <Badge variant="secondary" className="hidden shrink-0 sm:inline-flex">ERP Logístico</Badge>
           </div>
         </div>
 

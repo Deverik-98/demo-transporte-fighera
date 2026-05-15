@@ -19,7 +19,6 @@ import {
   PenTool,
   Route,
   DollarSign,
-  Truck,
   Upload,
   User,
   Wrench,
@@ -36,6 +35,7 @@ import { LatLngExpression, divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { toast } from 'sonner';
 import type { TripStage } from './components/modules/TripStageStepper';
+import { BrandLogo } from './components/brand/BrandLogo';
 import { appendCriticalAlert, getSyncDocuments, getSyncTrips, getSyncUsers, getSyncVehicles, requestGlobalDemoReset, setSyncTrips, SyncTrip, TRIPS_KEY } from './lib/sync-store';
 import { buildPathForStopCount, formatTripRouteStops } from './lib/trip-route';
 
@@ -1265,8 +1265,11 @@ export default function App() {
       <div className="max-w-md mx-auto h-[100dvh] bg-slate-900 text-white flex flex-col justify-center p-6">
         <div className="bg-slate-800 rounded-2xl p-6 border border-slate-700 shadow-2xl">
           <div className="mb-6">
-            <h1 className="text-2xl font-bold">Transporte Fighera</h1>
-            <p className="text-sm text-slate-300 mt-1">Acceso de choferes y control de ruta</p>
+            <div className="mb-3 flex items-center justify-center gap-3">
+              <BrandLogo variant="compact" priority className="shrink-0" imgClassName="h-11 w-auto brightness-0 invert" />
+              <h1 className="text-2xl font-bold">Transporte Fighera</h1>
+            </div>
+            <p className="text-center text-sm text-slate-300">Acceso de choferes y control de ruta</p>
           </div>
 
           <label className="text-xs text-slate-300">Email</label>
@@ -1312,14 +1315,13 @@ export default function App() {
     <div className="max-w-md mx-auto h-[100dvh] relative overflow-hidden bg-gray-50 shadow-2xl flex flex-col">
       {/* Top Bar */}
       <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-lg">
-        <div className="flex items-center gap-3">
-          <Truck className="w-6 h-6" />
-          <div>
-            <div className="font-bold text-sm">Transporte Fighera</div>
-            <div className="text-xs opacity-90">App Chofer · Operación en curso</div>
+        <div className="flex min-w-0 flex-1 items-center gap-2 pr-2">
+          <BrandLogo variant="compact" className="shrink-0" imgClassName="brightness-0 invert" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold">Transporte Fighera</p>
+            <p className="truncate text-xs opacity-90">App Chofer · Operación en curso</p>
           </div>
         </div>
-
         <div className="flex items-center gap-3">
           <motion.div
             animate={{ opacity: [1, 0.3, 1] }}

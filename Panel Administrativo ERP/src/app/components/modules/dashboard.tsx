@@ -162,7 +162,7 @@ function UnifiedRouteMap({
   }, [visibleTrips, resolvedRoutes]);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border h-[560px]">
+    <div className="overflow-hidden rounded-xl border border-border h-[clamp(260px,52dvh,560px)]">
       <MapContainer center={center} zoom={zoom} className="h-full w-full" scrollWheelZoom>
         <MapViewportHandler center={center} zoom={zoom} />
         <MapResizeHandler

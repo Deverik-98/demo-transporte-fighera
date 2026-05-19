@@ -368,7 +368,7 @@ export function DocumentsModule({ focusTripId, onFocusTripConsumed }: DocumentsM
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Tipo de documento</Label>
                   <Select value={form.documentType} onValueChange={(value) => setForm((prev) => ({ ...prev, documentType: value }))}>
@@ -428,7 +428,7 @@ export function DocumentsModule({ focusTripId, onFocusTripConsumed }: DocumentsM
             }}
             className="space-y-4"
           >
-            <TabsList className="grid w-full max-w-3xl grid-cols-4">
+            <TabsList className="grid w-full max-w-3xl grid-cols-2 sm:grid-cols-4">
               <TabsTrigger value="vehicle">Vehículos</TabsTrigger>
               <TabsTrigger value="user">Choferes</TabsTrigger>
               <TabsTrigger value="trip">Viajes</TabsTrigger>

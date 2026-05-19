@@ -1028,7 +1028,7 @@ export function ExpirationConfig() {
                 ) : null}
               </MapContainer>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-2">
                 <Label>Latitud centro</Label>
                 <Input value={zoneForm.lat} onChange={(event) => setZoneForm((prev) => ({ ...prev, lat: event.target.value }))} required />

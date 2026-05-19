@@ -209,7 +209,7 @@ export function Security() {
                         <Label>Email</Label>
                         <Input type="email" value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} required />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div className="space-y-2">
                           <Label>Rol</Label>
                           <Select
@@ -253,7 +253,7 @@ export function Security() {
                           <div className="space-y-3">
                             {driverDocsDraft.map((doc) => (
                               <div key={doc.id} className="rounded-md border p-3">
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                   <div className="space-y-2">
                                     <Label>Tipo de documento</Label>
                                     <Select
@@ -347,7 +347,7 @@ export function Security() {
                         </td>
                         <td className="p-3">
                           <Select value={user.status} onValueChange={(value: UserStatus) => updateUserStatus(user.id, value)}>
-                            <SelectTrigger className="h-10 w-[120px]"><SelectValue /></SelectTrigger>
+                            <SelectTrigger className="h-10 w-full min-w-[8rem] sm:w-[120px]"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="Activo">Activo</SelectItem>
                               <SelectItem value="Inactivo">Inactivo</SelectItem>

@@ -176,7 +176,7 @@ export function VehiclesModule() {
               <DialogTitle>Alta de vehículo + documentación</DialogTitle>
             </DialogHeader>
             <form className="space-y-5" onSubmit={handleSubmit}>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Patente</Label>
                   <Input value={form.plate} onChange={(e) => setForm((prev) => ({ ...prev, plate: e.target.value }))} required />
@@ -251,7 +251,7 @@ export function VehiclesModule() {
                 <div className="space-y-3">
                   {docsDraft.map((doc) => (
                     <div key={doc.id} className="rounded-md border p-3">
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div className="space-y-2">
                           <Label>Tipo</Label>
                           <Select value={doc.documentType} onValueChange={(value) => updateDraft(doc.id, { documentType: value })}>
@@ -399,7 +399,7 @@ export function VehiclesModule() {
                         value={vehicle.fleetKind}
                         onValueChange={(value: VehicleFleetKind) => updateVehicleFleetKind(vehicle.id, value)}
                       >
-                        <SelectTrigger className="h-10 w-[200px]"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="h-10 w-full min-w-[9rem] sm:w-[200px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Propio">Propio</SelectItem>
                           <SelectItem value="Fletero">Fletero</SelectItem>
@@ -426,7 +426,7 @@ export function VehiclesModule() {
                     </td>
                     <td className="p-3">
                       <Select value={vehicle.status} onValueChange={(value: VehicleStatus) => updateVehicleStatus(vehicle.id, value)}>
-                        <SelectTrigger className="h-10 w-[180px]"><SelectValue /></SelectTrigger>
+                        <SelectTrigger className="h-10 w-full min-w-[9rem] sm:w-[180px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Activo">Activo</SelectItem>
                           <SelectItem value="Mantenimiento">Mantenimiento</SelectItem>

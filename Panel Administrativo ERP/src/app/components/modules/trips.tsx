@@ -646,9 +646,107 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               </CardTitle>
               <p className="text-xs text-muted-foreground">Los colores de fila siguen la leyenda superior.</p>
             </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[1480px] border-collapse text-xs">
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground lg:hidden">
+                Vista optimizada para móvil. En pantallas grandes se mantiene la planilla tabular completa.
+              </p>
+              <div className="space-y-3 lg:hidden">
+                {groupedByZone.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                    No hay viajes para los filtros seleccionados.
+                  </div>
+                ) : (
+                  groupedByZone.map((zoneGroup) => (
+                    <section key={`zone-cards-${zoneGroup.zoneId}`} className="space-y-2">
+                      <div className="rounded-md bg-gray-800 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-gray-100">
+                        Zona: {zoneGroup.zoneName}
+                      </div>
+                      <div className="space-y-2">
+                        {zoneGroup.items.map((trip) => {
+                          const incidents = alertsByTripId.get(trip.id) ?? [];
+                          const activeIncidents = incidents.filter((alert) => alert.status === "Activa").length;
+                          return (
+                            <Card key={`trip-card-${trip.id}`} className={`${rowStatusTone(trip)} border-border/60`}>
+                              <CardContent className="space-y-2 p-3 text-xs">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span className="font-semibold">{trip.id}</span>
+                                  <Badge variant={statusBadgeVariant(trip.status) as "secondary"}>{trip.status}</Badge>
+                                </div>
+                                <p><span className="font-medium">Fecha:</span> {formatDateTime(trip.scheduledAt)}</p>
+                                <p><span className="font-medium">Chofer:</span> {trip.driver}</p>
+                                <p><span className="font-medium">Empresa:</span> {trip.clientCompany}</p>
+                                <p><span className="font-medium">Plan de carga:</span> <span className="font-mono">{trip.remitoNumber}</span></p>
+                                <p><span className="font-medium">Camión:</span> <span className="font-mono">{trip.vehiclePlate}</span></p>
+                                <p><span className="font-medium">Ruta:</span> {formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</p>
+                                <p><span className="font-medium">Material/Carga:</span> {trip.cargo}</p>
+                                <p><span className="font-medium">Obs. interna:</span> {trip.internalNote?.trim() || "—"}</p>
+                                {incidents.length === 0 ? (
+                                  <span className="text-muted-foreground">Sin alertas</span>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant={activeIncidents > 0 ? "destructive" : "outline"}
+                                    className="h-8 px-2 text-[11px]"
+                                    onClick={() => setAlertDetailsTripId(trip.id)}
+                                  >
+                                    <AlertTriangle className="mr-1 h-3 w-3" />
+                                    {activeIncidents > 0 ? `${activeIncidents} activa(s)` : `${incidents.length} resueltas`}
+                                  </Button>
+                                )}
+                                <div className="flex flex-wrap gap-1 pt-1">
+                                  <Button size="sm" variant="outline" className="h-8 px-2 text-[11px]" onClick={() => focusTripInMap(trip)}>
+                                    <Navigation className="mr-1 h-3 w-3" />
+                                    Mapa
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 px-2 text-[11px]"
+                                    onClick={() => onOpenTripDocuments?.(trip.id)}
+                                  >
+                                    <FolderOpen className="mr-1 h-3 w-3" />
+                                    Docs
+                                  </Button>
+                                  <Button size="sm" variant="outline" className="h-8 px-2 text-[11px]" onClick={() => openEditTrip(trip)}>
+                                    <PenSquare className="mr-1 h-3 w-3" />
+                                    Editar
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 px-2 text-[11px]"
+                                    disabled={trip.status === "Entregado" || trip.status === "Cancelado"}
+                                    onClick={() => updateTripStatus(trip.id, "Entregado")}
+                                  >
+                                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                                    Entregar
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 px-2 text-[11px]"
+                                    disabled={trip.status === "Entregado" || trip.status === "Cancelado"}
+                                    onClick={() => cancelTrip(trip.id)}
+                                  >
+                                    <XCircle className="mr-1 h-3 w-3" />
+                                    Cancelar
+                                  </Button>
+                                  <Button size="sm" variant="outline" className="h-8 px-2 text-[11px]" onClick={() => removeTrip(trip.id)}>
+                                    <Trash2 className="mr-1 h-3 w-3" />
+                                    Eliminar
+                                  </Button>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))
+                )}
+              </div>
+              <div className="hidden overflow-x-auto rounded-lg border lg:block">
+                <table className="w-full min-w-[1100px] border-collapse text-xs">
                   <thead>
                     <tr className="border-b bg-muted/70 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="px-2 py-1.5 text-left">ID Viaje</th>
@@ -701,7 +799,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                                   <Button
                                     size="sm"
                                     variant={activeIncidents > 0 ? "destructive" : "outline"}
-                                    className="h-6 px-2 text-[10px]"
+                                    className="h-7 px-2 text-[10px]"
                                     onClick={() => setAlertDetailsTripId(trip.id)}
                                   >
                                     <AlertTriangle className="mr-1 h-3 w-3" />
@@ -711,24 +809,24 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               </td>
                               <td className="px-2 py-1.5">
                                 <div className="flex flex-wrap gap-1">
-                                  <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => focusTripInMap(trip)}>
+                                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => focusTripInMap(trip)}>
                                     <Navigation className="h-3 w-3" />
                                   </Button>
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-6 px-2 text-[10px]"
+                                    className="h-7 px-2 text-[10px]"
                                     onClick={() => onOpenTripDocuments?.(trip.id)}
                                   >
                                     <FolderOpen className="h-3 w-3" />
                                   </Button>
-                                  <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => openEditTrip(trip)}>
+                                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => openEditTrip(trip)}>
                                     <PenSquare className="h-3 w-3" />
                                   </Button>
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-6 px-2 text-[10px]"
+                                    className="h-7 px-2 text-[10px]"
                                     disabled={trip.status === "Entregado" || trip.status === "Cancelado"}
                                     onClick={() => updateTripStatus(trip.id, "Entregado")}
                                   >
@@ -737,13 +835,13 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-6 px-2 text-[10px]"
+                                    className="h-7 px-2 text-[10px]"
                                     disabled={trip.status === "Entregado" || trip.status === "Cancelado"}
                                     onClick={() => cancelTrip(trip.id)}
                                   >
                                     <XCircle className="h-3 w-3" />
                                   </Button>
-                                  <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => removeTrip(trip.id)}>
+                                  <Button size="sm" variant="outline" className="h-7 px-2 text-[10px]" onClick={() => removeTrip(trip.id)}>
                                     <Trash2 className="h-3 w-3" />
                                   </Button>
                                 </div>
@@ -858,7 +956,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       </Tabs>
 
       <Dialog open={editingTripId !== null} onOpenChange={(open) => !open && setEditingTripId(null)}>
-        <DialogContent className="z-[1600] max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogContent className="z-[1600] max-h-[92dvh] w-[calc(100%-1rem)] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Editar viaje {editingTripId}</DialogTitle>
             <DialogDescription>
@@ -982,7 +1080,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             <section aria-label="Ruta" className="rounded-xl border border-border/80 bg-muted/15 p-4 space-y-4">
               <div className="space-y-2 rounded-lg border border-border/60 bg-background p-3">
                 <div className="overflow-hidden rounded-lg border [&_.leaflet-container]:z-[0] [&_.leaflet-pane]:isolate">
-                  <MapContainer center={editMapCenter} zoom={editSelectedZone?.zoom ?? 6} className="h-48 w-full" scrollWheelZoom>
+                  <MapContainer center={editMapCenter} zoom={editSelectedZone?.zoom ?? 6} className="h-[clamp(220px,34dvh,340px)] w-full" scrollWheelZoom>
                     <TileLayer
                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
                       url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
@@ -1074,13 +1172,13 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">Planificación del viaje</Label>
                 <div className="rounded-xl bg-muted/35 p-2">
-                  <div className="relative space-y-1.5 pl-6">
+                  <div className="relative space-y-1.5 pl-4 sm:pl-6">
                     <span className="absolute left-[11px] top-5 bottom-6 w-px bg-border" />
                     {editForm.routeStops.map((label, idx) => (
                       <Fragment key={`edit-stop-${idx}`}>
-                        <div className="relative grid grid-cols-[minmax(0,1fr)_2.25rem_2.25rem] items-center gap-2">
+                        <div className="relative grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_2.25rem_2.25rem]">
                           <span
-                            className={`absolute -left-5 inline-flex h-3 w-3 items-center justify-center rounded-full border-2 border-white ${
+                            className={`absolute -left-3 sm:-left-5 inline-flex h-3 w-3 items-center justify-center rounded-full border-2 border-white ${
                               idx === 0 ? "bg-blue-600" : idx === editForm.routeStops.length - 1 ? "bg-emerald-600" : "bg-slate-900"
                             }`}
                           />
@@ -1097,7 +1195,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               });
                             }}
                           />
-                          <div className="flex justify-end">
+                          <div className="flex sm:justify-end">
                             {idx > 0 && idx < editForm.routeStops.length - 1 ? (
                               <Button
                                 type="button"
@@ -1117,7 +1215,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               <span className="inline-block h-10 w-10 shrink-0" aria-hidden />
                             )}
                           </div>
-                          <div className="flex justify-end">
+                          <div className="flex sm:justify-end">
                             {idx < editForm.routeStops.length - 1 ? (
                               <Button
                                 type="button"
@@ -1225,7 +1323,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       </Dialog>
 
       <Dialog open={alertDetailsTripId !== null} onOpenChange={(open) => !open && setAlertDetailsTripId(null)}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="w-[calc(100%-1rem)] sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Alertas del viaje {alertDetailsTripId}</DialogTitle>
             <DialogDescription>Detalle de incidencias vinculadas al viaje o a su camión.</DialogDescription>
@@ -1257,7 +1355,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       </Dialog>
 
       <Dialog open={printOpen} onOpenChange={setPrintOpen}>
-        <DialogContent className="max-h-[95vh] max-w-[95vw] overflow-y-auto sm:max-w-6xl">
+        <DialogContent className="max-h-[95dvh] w-[calc(100%-1rem)] overflow-y-auto sm:max-w-6xl">
           <DialogHeader className="print-hide">
             <DialogTitle>Previsualización de Planilla Operativa Filtrada</DialogTitle>
             <DialogDescription>Se imprime exactamente la misma data visible según filtros activos.</DialogDescription>

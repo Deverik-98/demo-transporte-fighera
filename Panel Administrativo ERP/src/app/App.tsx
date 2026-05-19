@@ -119,9 +119,10 @@ function AppContent() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-background">
-      <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6">
-        <div className="flex items-center gap-4">
+    <div className="min-h-dvh flex flex-col bg-background">
+      <header className="border-b border-border bg-card px-3 py-2 sm:px-6">
+        <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 sm:min-h-14">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <Button
             variant="ghost"
             size="icon"
@@ -129,25 +130,25 @@ function AppContent() {
           >
             {sidebarCollapsed ? <Menu className="h-5 w-5" /> : <X className="h-5 w-5" />}
           </Button>
-          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <BrandLogo variant="compact" priority className="shrink-0" />
-            <h1 className="truncate text-xl font-semibold">{BRAND_NAME}</h1>
+              <h1 className="truncate text-base font-semibold sm:text-xl">{BRAND_NAME}</h1>
             <Badge variant="secondary" className="hidden shrink-0 sm:inline-flex">ERP Logístico</Badge>
+            </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="relative">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:gap-3">
+            <Button variant="ghost" size="icon" className="relative">
             <Bell className="h-5 w-5" />
             <span className="absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full"></span>
           </Button>
           <ThemeToggle />
-          <Button variant="ghost" className="flex items-center gap-2">
+            <Button variant="ghost" className="flex items-center gap-2">
             <User className="h-5 w-5" />
-            <span className="hidden md:inline">Rol: {currentUserRole}</span>
+              <span className="hidden lg:inline">Rol: {currentUserRole}</span>
           </Button>
           <select
-            className="rounded-md border bg-background px-2 py-1 text-sm"
+              className="h-9 min-w-0 rounded-md border bg-background px-2 py-1 text-sm max-sm:w-full sm:w-auto"
             value={currentUserRole}
             onChange={(event) => setCurrentUserRole(event.target.value as UserRole)}
           >
@@ -155,19 +156,28 @@ function AppContent() {
               <option key={role} value={role}>{role}</option>
             ))}
           </select>
-          <Button variant="outline" size="sm" onClick={resetDemoData}>
+            <Button variant="outline" size="sm" className="max-sm:w-full" onClick={resetDemoData}>
             Reset demo data
           </Button>
+          </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative flex flex-1 min-h-0">
+        {!sidebarCollapsed ? (
+          <button
+            type="button"
+            aria-label="Cerrar menú lateral"
+            className="absolute inset-0 z-30 bg-black/45 md:hidden"
+            onClick={() => setSidebarCollapsed(true)}
+          />
+        ) : null}
         <aside
-          className={`border-r border-border bg-sidebar transition-all duration-300 ${
-            sidebarCollapsed ? "w-0 overflow-hidden" : "w-72"
+          className={`border-r border-border bg-sidebar transition-all duration-300 absolute inset-y-0 left-0 z-40 w-[min(18rem,86vw)] transform md:static md:inset-auto md:z-auto md:transform-none ${
+            sidebarCollapsed ? "-translate-x-full md:w-0 md:overflow-hidden" : "translate-x-0 md:w-72"
           }`}
         >
-          <nav className="p-4 space-y-2">
+          <nav className="h-full overflow-y-auto p-3 sm:p-4 space-y-2">
             {menuItems
               .filter((item) => canAccess(currentUserRole, item.id as Parameters<typeof canAccess>[1]))
               .map((item) => {
@@ -176,7 +186,12 @@ function AppContent() {
                 return (
                   <button
                     key={item.id}
-                    onClick={() => setCurrentView(item.id)}
+                    onClick={() => {
+                      setCurrentView(item.id);
+                      if (window.matchMedia("(max-width: 767px)").matches) {
+                        setSidebarCollapsed(true);
+                      }
+                    }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                       isActive
                         ? "bg-sidebar-primary text-sidebar-primary-foreground"
@@ -191,7 +206,7 @@ function AppContent() {
           </nav>
         </aside>
 
-        <main className="flex-1 overflow-y-auto p-6 bg-background">
+        <main className="flex-1 min-w-0 overflow-y-auto bg-background p-3 sm:p-6">
           <div className="max-w-[1600px] mx-auto">
             {renderContent()}
           </div>

@@ -254,7 +254,7 @@ export function TripImportModal({ buttonClassName, onTripsImported }: TripImport
           Importar viajes
         </Button>
       </DialogTrigger>
-      <DialogContent className="z-[1600] max-h-[92vh] overflow-y-auto sm:max-w-5xl">
+      <DialogContent className="z-[1600] max-h-[92dvh] w-[calc(100%-1rem)] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Importación masiva de viajes</DialogTitle>
           <DialogDescription>
@@ -322,9 +322,10 @@ export function TripImportModal({ buttonClassName, onTripsImported }: TripImport
                 {loadedRows.length ? `${loadedRows.length} registros` : "Sin carga"}
               </Badge>
             </div>
-            <div className="overflow-hidden rounded-lg border">
+            <div className="space-y-2 rounded-lg border p-1">
+              <p className="px-2 text-xs text-muted-foreground">Deslizá horizontalmente para ver todas las columnas.</p>
               <div className="max-h-72 overflow-auto">
-                <table className="w-full min-w-[980px] border-collapse text-sm">
+                <table className="w-full min-w-[860px] border-collapse text-sm">
                   <thead className="sticky top-0 bg-muted">
                     <tr>
                       <th className="border-b px-3 py-2 text-left font-medium">#</th>

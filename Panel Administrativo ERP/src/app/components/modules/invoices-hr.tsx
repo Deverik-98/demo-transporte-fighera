@@ -98,7 +98,7 @@ export function InvoicesHRModule() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Periodo</Label>
                   <Input
@@ -144,7 +144,7 @@ export function InvoicesHRModule() {
               Seguimiento de firmas de facturas
             </CardTitle>
             <Select value={statusFilter} onValueChange={(value: "all" | "Cargada" | "Firmada") => setStatusFilter(value)}>
-              <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-full min-w-[9rem] sm:w-[180px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los estados</SelectItem>
                 <SelectItem value="Cargada">Cargada</SelectItem>

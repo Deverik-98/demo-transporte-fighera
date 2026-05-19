@@ -359,7 +359,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
         </Button>
       </DialogTrigger>
       <DialogContent
-        className="z-[1600] max-h-[90vh] overflow-y-auto sm:max-w-3xl"
+        className="z-[1600] max-h-[92dvh] w-[calc(100%-1rem)] overflow-y-auto sm:max-w-3xl"
         onInteractOutside={(event) => event.preventDefault()}
         onEscapeKeyDown={(event) => event.preventDefault()}
       >
@@ -406,7 +406,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
           <section aria-label="Ruta" className="rounded-xl border border-border/80 bg-muted/15 p-4 space-y-4">
             <div className="space-y-2 rounded-lg border border-border/60 bg-background p-3">
               <div className="overflow-hidden rounded-lg border [&_.leaflet-container]:z-[0] [&_.leaflet-pane]:isolate">
-                <MapContainer center={mapCenter} zoom={selectedZone?.zoom ?? 6} className="h-48 w-full" scrollWheelZoom>
+                <MapContainer center={mapCenter} zoom={selectedZone?.zoom ?? 6} className="h-[clamp(220px,34dvh,340px)] w-full" scrollWheelZoom>
                   <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; CARTO'
                     url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
@@ -473,13 +473,13 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">Planificación del viaje</Label>
               <div className="rounded-xl bg-muted/35 p-2">
-                <div className="relative space-y-1.5 pl-6">
+                <div className="relative space-y-1.5 pl-4 sm:pl-6">
                   <span className="absolute left-[11px] top-5 bottom-6 w-px bg-border" />
                   {stopLabels.map((label, idx) => (
                     <Fragment key={`stop-${idx}`}>
-                      <div className="relative grid grid-cols-[minmax(0,1fr)_2.25rem_2.25rem] items-center gap-2">
+                      <div className="relative grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_2.25rem_2.25rem]">
                         <span
-                          className={`absolute -left-5 inline-flex h-3 w-3 items-center justify-center rounded-full border-2 border-white ${
+                          className={`absolute -left-3 sm:-left-5 inline-flex h-3 w-3 items-center justify-center rounded-full border-2 border-white ${
                             idx === 0 ? "bg-blue-600" : idx === stopLabels.length - 1 ? "bg-emerald-600" : "bg-slate-900"
                           }`}
                         />
@@ -496,7 +496,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                             });
                           }}
                         />
-                        <div className="flex justify-end">
+                        <div className="flex sm:justify-end">
                           {idx > 0 && idx < stopLabels.length - 1 ? (
                             <Button
                               type="button"
@@ -514,7 +514,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                             <span className="inline-block h-10 w-10 shrink-0" aria-hidden />
                           )}
                         </div>
-                        <div className="flex justify-end">
+                        <div className="flex sm:justify-end">
                           {idx < stopLabels.length - 1 ? (
                             <Button
                               type="button"

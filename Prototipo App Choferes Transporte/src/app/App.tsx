@@ -36,6 +36,7 @@ import 'leaflet/dist/leaflet.css';
 import { toast } from 'sonner';
 import type { TripStage } from './components/modules/TripStageStepper';
 import { BrandLogo } from './components/brand/BrandLogo';
+import { BRAND_NAME } from './lib/brand';
 import { appendCriticalAlert, getSyncDocuments, getSyncTrips, getSyncUsers, getSyncVehicles, requestGlobalDemoReset, setSyncTrips, SyncTrip, TRIPS_KEY } from './lib/sync-store';
 import { buildPathForStopCount, formatTripRouteStops } from './lib/trip-route';
 
@@ -83,6 +84,8 @@ interface Trip {
   distancia: string;
   eta: string;
   plan: string;
+  /** Uso administrativo (no visible al chofer); se preserva para no perder datos en sync. */
+  internalNote?: string;
   estado: TripStatus;
   /** Cliente / empresa (sincronizado con panel). */
   clientCompany?: string;
@@ -205,6 +208,29 @@ function normalizeDriverName(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
+function normalizeDriverEmail(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.endsWith('@transportefighera.com')) {
+    return `${normalized.slice(0, -'@transportefighera.com'.length)}@transportefighiera.com`;
+  }
+  return normalized;
+}
+
+function formatTripScheduleLabel(value: string) {
+  const asDate = new Date(value);
+  if (!Number.isNaN(asDate.getTime())) {
+    return asDate.toLocaleString('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  }
+  return value;
+}
+
 function normalizeIncomingSyncStatus(raw: string | undefined): SyncTrip['status'] {
   if (!raw || typeof raw !== 'string') return 'Asignado';
   const lower = raw.trim().toLowerCase();
@@ -275,6 +301,7 @@ function mapTripToSync(trip: Trip): SyncTrip {
                   : 'En planta',
     cargo: trip.carga,
     plan: trip.plan,
+    internalNote: trip.internalNote?.trim() || undefined,
     scheduledAt: trip.fechaProgramada,
     clientCompany: trip.clientCompany?.trim() || undefined,
     remitoNumber: trip.remitoNumber?.trim() || undefined,
@@ -306,6 +333,7 @@ function mapSyncToMobileTrip(syncTrip: SyncTrip): Trip {
     distancia: `${Math.max(50, Math.round((syncTrip.routePath.length || 2) * 90))} km`,
     eta: "3h 30m",
     plan: syncTrip.plan,
+    internalNote: syncTrip.internalNote?.trim() || undefined,
     estado:
       normalizedStatus === 'Sin chofer'
         ? 'sin-chofer'
@@ -401,7 +429,7 @@ const initialMobileTrips: Trip[] = [
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loginEmail, setLoginEmail] = useState('juan.perez@transportefighera.com');
+  const [loginEmail, setLoginEmail] = useState('juan.perez@transportefighiera.com');
   const [loginPassword, setLoginPassword] = useState('123456');
   const [currentDriverId, setCurrentDriverId] = useState('driver-juan');
   const [currentDriverName, setCurrentDriverName] = useState('Juan Pérez');
@@ -487,9 +515,9 @@ export default function App() {
     () => {
       const syncedDrivers = syncedUserRecords
         .filter((user) => user.role === 'Chofer' && user.status === 'Activo')
-        .map((user) => ({ id: user.id, email: user.email.toLowerCase(), driverName: user.name }));
+        .map((user) => ({ id: user.id, email: normalizeDriverEmail(user.email), driverName: user.name }));
       if (syncedDrivers.length) return syncedDrivers;
-      return [{ id: 'driver-juan', email: 'juan.perez@transportefighera.com', driverName: 'Juan Pérez' }];
+      return [{ id: 'driver-juan', email: 'juan.perez@transportefighiera.com', driverName: 'Juan Pérez' }];
     },
     [syncedUserRecords]
   );
@@ -576,7 +604,7 @@ export default function App() {
     const table = list.length
       ? `<table><thead><tr><th>ID</th><th>Fecha</th><th>Cliente</th><th>Nº plan</th><th>Camión</th><th>Ruta</th><th>Estado</th></tr></thead><tbody>${rows}</tbody></table>`
       : '<p>Sin viajes en historial.</p>';
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Historial viajes</title><style>body{font:12px system-ui;color:#000;padding:16px}.mono{font-family:ui-monospace,monospace}table{border-collapse:collapse;width:100%}td,th{border:1px solid #000;padding:6px;text-align:left}</style></head><body><h2>Transportes Fighera — Historial</h2><p>Chofer: ${esc(
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Historial viajes</title><style>body{font:12px system-ui;color:#000;padding:16px}.mono{font-family:ui-monospace,monospace}table{border-collapse:collapse;width:100%}td,th{border:1px solid #000;padding:6px;text-align:left}</style></head><body><h2>${BRAND_NAME} — Historial</h2><p>Chofer: ${esc(
       currentDriverName
     )}</p>${table}<script>addEventListener('load',function(){setTimeout(function(){print();},300);});</script></body></html>`;
     const w = window.open('', '_blank');
@@ -637,7 +665,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const currentLogin = loginEmail.trim().toLowerCase();
+    const currentLogin = normalizeDriverEmail(loginEmail);
     const profile = driverProfiles.find((item) => item.email === currentLogin);
     if (profile && profile.driverName !== currentDriverName) {
       setCurrentDriverName(profile.driverName);
@@ -1267,7 +1295,7 @@ export default function App() {
           <div className="mb-6">
             <div className="mb-3 flex items-center justify-center gap-3">
               <BrandLogo variant="compact" priority className="shrink-0" imgClassName="h-11 w-auto brightness-0 invert" />
-              <h1 className="text-2xl font-bold">Transporte Fighera</h1>
+              <h1 className="text-2xl font-bold">{BRAND_NAME}</h1>
             </div>
             <p className="text-center text-sm text-slate-300">Acceso de choferes y control de ruta</p>
           </div>
@@ -1283,7 +1311,8 @@ export default function App() {
                 toast.error('Completa credenciales para ingresar');
                 return;
               }
-              const profile = driverProfiles.find((item) => item.email === loginEmail.trim().toLowerCase());
+              const loginCandidate = normalizeDriverEmail(loginEmail);
+              const profile = driverProfiles.find((item) => item.email === loginCandidate);
               if (!profile) {
                 toast.error('Chofer no registrado en la app');
                 return;
@@ -1318,7 +1347,7 @@ export default function App() {
         <div className="flex min-w-0 flex-1 items-center gap-2 pr-2">
           <BrandLogo variant="compact" className="shrink-0" imgClassName="brightness-0 invert" />
           <div className="min-w-0">
-            <p className="truncate text-sm font-bold">Transporte Fighera</p>
+            <p className="truncate text-sm font-bold">{BRAND_NAME}</p>
             <p className="truncate text-xs opacity-90">App Chofer · Operación en curso</p>
           </div>
         </div>
@@ -1397,7 +1426,13 @@ export default function App() {
                     <button onClick={() => toggleTripExpanded(trip.id)} className="w-full p-4 text-left flex items-center justify-between">
                       <div>
                         <div className="font-bold text-gray-900">{trip.id}</div>
-                        <div className="text-xs text-gray-500 flex items-center gap-1"><CalendarClock className="w-3 h-3" /> {trip.fechaProgramada}</div>
+                        <div className="text-xs text-gray-500">
+                          <div className="flex items-center gap-1">
+                            <CalendarClock className="h-3 w-3 shrink-0" />
+                            <span className="font-medium">Fecha y hora del viaje</span>
+                          </div>
+                          <div className="pl-4 text-[11px] font-medium text-gray-700">{formatTripScheduleLabel(trip.fechaProgramada)}</div>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">{trip.estado.toUpperCase()}</span>
@@ -1413,12 +1448,12 @@ export default function App() {
                             <p><span className="font-semibold">Ruta:</span> {formatTripRouteStops(trip.routeStops, trip.origen, trip.destino)}</p>
                             <p><span className="font-semibold">Cliente:</span> {trip.clientCompany ?? '—'}</p>
                             <p>
-                              <span className="font-semibold">Nº plan:</span>{' '}
+                              <span className="font-semibold">Número de plan de carga:</span>{' '}
                               <span className="font-mono text-xs">{trip.remitoNumber ?? '—'}</span>
                             </p>
-                            <p><span className="font-semibold">Carga:</span> {trip.carga}</p>
+                            <p><span className="font-semibold">Material/Carga:</span> {trip.carga}</p>
                             <p><span className="font-semibold">Distancia:</span> {trip.distancia} · ETA {trip.eta}</p>
-                            <p><span className="font-semibold">Plan:</span> {trip.plan}</p>
+                            <p><span className="font-semibold">Condiciones de viaje / Observaciones:</span> {trip.plan}</p>
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-600">
                               La gestión de documentos está disponible en la pantalla <span className="font-semibold">Ruta en Curso</span>.
                             </div>

@@ -1,7 +1,22 @@
 /** Empresas con plan de carga manual (alfanumérico, longitud fija). */
-export const PRINCIPAL_CLIENT_COMPANIES = ["SIDERSA", "Acindar", "CIPLAR"] as const;
+export const PRINCIPAL_CLIENT_COMPANIES = ["Sidersa", "Acindar", "Sipar"] as const;
 
 export type PrincipalClientCompany = (typeof PRINCIPAL_CLIENT_COMPANIES)[number];
+
+const LEGACY_CLIENT_ALIASES: Record<string, PrincipalClientCompany> = {
+  sidersa: "Sidersa",
+  acindar: "Acindar",
+  ciplar: "Sipar",
+  sipar: "Sipar",
+};
+
+/** Normaliza nombres legacy (Sidersa, Sipar, etc.) al formato acordado con el cliente. */
+export function normalizeClientCompanyDisplay(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  const canonical = LEGACY_CLIENT_ALIASES[trimmed.toLowerCase()];
+  return canonical ?? trimmed;
+}
 
 export function isPrincipalClientCompany(name: string): boolean {
   const t = name.trim().toLowerCase();
@@ -10,9 +25,9 @@ export function isPrincipalClientCompany(name: string): boolean {
 
 /** Longitud máxima del plan de carga (caracteres) para clientes con nomenclatura; `null` si no aplica. */
 export function getPrincipalLoadPlanMaxLength(clientCompany: string): 7 | 8 | null {
-  const t = clientCompany.trim().toLowerCase();
+  const t = normalizeClientCompanyDisplay(clientCompany).toLowerCase();
   if (t === "sidersa") return 7;
-  if (t === "acindar" || t === "ciplar") return 8;
+  if (t === "acindar" || t === "sipar") return 8;
   return null;
 }
 
@@ -30,8 +45,8 @@ export function isValidPrincipalLoadPlan(clientCompany: string, value: string): 
 
 export function loadPlanValidationMessage(clientCompany: string): string {
   const len = getPrincipalLoadPlanMaxLength(clientCompany);
-  if (len === 7) return "Ingresá exactamente 7 caracteres alfanuméricos (SIDERSA).";
-  if (len === 8) return "Ingresá exactamente 8 caracteres alfanuméricos (Acindar / CIPLAR).";
+  if (len === 7) return "Ingresá exactamente 7 caracteres alfanuméricos (Sidersa).";
+  if (len === 8) return "Ingresá exactamente 8 caracteres alfanuméricos (Acindar / Sipar).";
   return "Plan de carga inválido para este cliente.";
 }
 

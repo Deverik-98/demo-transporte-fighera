@@ -18,7 +18,7 @@ type ImportTripRow = {
   zoneId: ZoneId;
   zone: string;
   clientCompany: string;
-  /** Plan de carga (solo dígitos) si empresa_cliente es SIDERSA, Acindar o CIPLAR. */
+  /** Plan de carga (solo dígitos) si empresa_cliente es Sidersa, Acindar o Sipar. */
   remito?: string;
   origin: string;
   destination: string;
@@ -45,7 +45,7 @@ function buildMockRows(
   const base = routeTemplates.slice(0, 6).map((route, idx) => {
     const zone = zones.find((item) => item.id === route.zoneId);
     if (!zone) return null;
-    const principals = ["SIDERSA", "Acindar", "CIPLAR"] as const;
+    const principals = ["Sidersa", "Acindar", "Sipar"] as const;
     const clientCompany = principals[idx % principals.length];
     const maxLen = getPrincipalLoadPlanMaxLength(clientCompany) ?? 7;
     const remito =
@@ -70,7 +70,7 @@ function buildMockRows(
   return zones.slice(0, 4).map((zone, idx) => ({
     zoneId: zone.id,
     zone: zone.name,
-    clientCompany: idx % 2 === 0 ? "SIDERSA" : "Cliente masivo demo",
+    clientCompany: idx % 2 === 0 ? "Sidersa" : "Cliente masivo demo",
     remito: idx % 2 === 0 ? "A123456" : undefined,
     origin: `${zone.name} Centro`,
     destination: `${zone.name} Norte`,

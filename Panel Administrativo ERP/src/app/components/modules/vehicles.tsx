@@ -7,6 +7,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
+import { BRAND_NAME } from "../../lib/brand";
 import { useOperationsData, VehicleFleetKind, VehicleStatus, ZoneId } from "../../lib/operations-data";
 import { FileUp, MessageSquare, Plus, Search, Trash2, Truck } from "lucide-react";
 import { AssociatedDocumentsDialog } from "./associated-documents-dialog";
@@ -207,7 +208,7 @@ export function VehiclesModule() {
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Propio">Propio (Transportes Fighera)</SelectItem>
+                      <SelectItem value="Propio">Propio ({BRAND_NAME})</SelectItem>
                       <SelectItem value="Fletero">Fletero (terceros)</SelectItem>
                     </SelectContent>
                   </Select>

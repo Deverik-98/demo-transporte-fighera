@@ -46,8 +46,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
     routeId: "",
     cargo: "",
     plan: "",
+    internalNote: "",
     scheduledAt: "",
-    clientCompanySelect: "SIDERSA" as "SIDERSA" | "Acindar" | "CIPLAR" | "otra",
+    clientCompanySelect: "Sidersa" as "Sidersa" | "Acindar" | "Sipar" | "otra",
     clientCompanyOther: "",
     remitoNumber: "",
   });
@@ -200,8 +201,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
         routeId: "",
         cargo: "",
         plan: "",
+        internalNote: "",
         scheduledAt: "",
-        clientCompanySelect: "SIDERSA",
+        clientCompanySelect: "Sidersa",
         clientCompanyOther: "",
         remitoNumber: "",
       });
@@ -309,6 +311,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       manualRoute: useGeneratedManualRoute ? { path: generatedPath as [number, number][] } : undefined,
       cargo: assignmentForm.cargo,
       plan: assignmentForm.plan,
+      internalNote: assignmentForm.internalNote,
       scheduledAt: resolvedScheduledAt,
       clientCompany,
       remitoNumber: isPrincipalClientCompany(clientCompany) ? assignmentForm.remitoNumber.trim() : undefined,
@@ -324,8 +327,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
       routeId: shouldUseManualRoute ? "" : resolvedRouteId,
       cargo: "",
       plan: "",
+      internalNote: "",
       scheduledAt: resolvedScheduledAt,
-      clientCompanySelect: "SIDERSA",
+      clientCompanySelect: "Sidersa",
       clientCompanyOther: "",
       remitoNumber: "",
     }));
@@ -378,8 +382,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                   routeId: routeTemplates.find((route) => route.zoneId === value)?.id ?? "",
                   cargo: "",
                   plan: "",
+                  internalNote: "",
                   scheduledAt: new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
-                  clientCompanySelect: "SIDERSA",
+                  clientCompanySelect: "Sidersa",
                   clientCompanyOther: "",
                   remitoNumber: "",
                 })
@@ -547,7 +552,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                 </Label>
                 <Select
                   value={assignmentForm.clientCompanySelect}
-                  onValueChange={(value: "SIDERSA" | "Acindar" | "CIPLAR" | "otra") =>
+                  onValueChange={(value: "Sidersa" | "Acindar" | "Sipar" | "otra") =>
                     setAssignmentForm((prev) => ({
                       ...prev,
                       clientCompanySelect: value,
@@ -616,9 +621,9 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                   <CalendarClock className="h-3.5 w-3.5" />
-                  Fecha y hora
+                  Fecha y hora del viaje
                 </Label>
                 <Input
                   type="datetime-local"
@@ -628,7 +633,7 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Carga</Label>
+                <Label className="text-xs font-medium text-muted-foreground">Material/Carga</Label>
                 <Input
                   value={assignmentForm.cargo}
                   onChange={(event) => setAssignmentForm((prev) => ({ ...prev, cargo: event.target.value }))}
@@ -640,10 +645,10 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
             <div className="space-y-2">
               <div>
                 <Label htmlFor="trip-conditions-notes" className="text-sm font-medium leading-snug text-foreground">
-                  Condiciones de viaje / Observaciones
+                  Condiciones de viaje / Observaciones (chofer)
                 </Label>
                 <p id="trip-conditions-notes-hint" className="mt-1 text-xs leading-snug text-muted-foreground">
-                  Podés anotar condiciones del viaje, camión, tarifas, ventanas horarias, contacto, etc.
+                  Este campo se verá en la app del chofer (ej.: condiciones de ruta, ventanas horarias, contacto operativo).
                 </p>
               </div>
               <Textarea
@@ -651,9 +656,27 @@ export function TripAssignmentModal({ buttonLabel, onTripCreated, buttonClassNam
                 aria-describedby="trip-conditions-notes-hint"
                 value={assignmentForm.plan}
                 onChange={(event) => setAssignmentForm((prev) => ({ ...prev, plan: event.target.value }))}
-                placeholder="Ej.: entrega 8–12 hs, rampa en destino, tarifa acordada, checklist…"
+                placeholder="Ej.: condiciones del viaje, camión, contacto operativo, ventanas horarias, etc."
                 className="min-h-[88px] resize-y"
                 required
+              />
+            </div>
+            <div className="space-y-2">
+              <div>
+                <Label htmlFor="trip-internal-note" className="text-sm font-medium leading-snug text-foreground">
+                  Observación interna (uso administrativo)
+                </Label>
+                <p id="trip-internal-note-hint" className="mt-1 text-xs leading-snug text-muted-foreground">
+                  Solo visible en panel admin. El chofer no verá este contenido (ej.: tarifa, acuerdos comerciales, notas internas).
+                </p>
+              </div>
+              <Textarea
+                id="trip-internal-note"
+                aria-describedby="trip-internal-note-hint"
+                value={assignmentForm.internalNote}
+                onChange={(event) => setAssignmentForm((prev) => ({ ...prev, internalNote: event.target.value }))}
+                placeholder="Ej.: tarifa pactada, condición de facturación, observaciones internas..."
+                className="min-h-[80px] resize-y"
               />
             </div>
           </section>

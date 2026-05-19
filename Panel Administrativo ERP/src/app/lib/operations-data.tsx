@@ -5,6 +5,7 @@ import {
   generateAutoLoadPlanReference,
   isPrincipalClientCompany,
   isValidPrincipalLoadPlan,
+  normalizeClientCompanyDisplay,
 } from "./trip-clients";
 import { embeddedOperationalZoneFeatures } from "./embedded-operational-zone-geometries";
 import { buildPathForStopCount, formatTripRouteStops } from "./trip-route";
@@ -83,7 +84,7 @@ export type Driver = { id: string; name: string; zoneId: ZoneId };
 export type UserRole = "Administrador" | "Operador" | "Supervisor" | "Chofer" | "Visualizador";
 export type UserStatus = "Activo" | "Inactivo";
 export type VehicleStatus = "Activo" | "Mantenimiento" | "Inactivo";
-/** Propio: flota Transportes Fighera. Fletero: unidad de terceros. */
+/** Propio: flota Transporte Fighiera. Fletero: unidad de terceros. */
 export type VehicleFleetKind = "Propio" | "Fletero";
 export type Vehicle = {
   id: string;
@@ -139,10 +140,12 @@ export type PlannedTrip = {
   cargo: string;
   /** Condiciones del viaje (plan operativo). */
   plan: string;
+  /** Observación interna (solo uso administrativo, no visible para choferes). */
+  internalNote?: string;
   scheduledAt: string;
   /** Empresa o cliente del viaje. */
   clientCompany: string;
-  /** Plan de carga alfanumérico (SIDERSA 7 / Acindar·CIPLAR 8) o ID correlativo AUTO-* (otros). */
+  /** Plan de carga alfanumérico (Sidersa 7 / Acindar·Sipar 8) o ID correlativo AUTO-* (otros). */
   remitoNumber: string;
   timeline?: Array<{ timestamp: string; descripcion: string }>;
   evidencias?: TripDocument[];
@@ -184,9 +187,10 @@ type TripInput = {
   };
   cargo: string;
   plan: string;
+  internalNote?: string;
   scheduledAt: string;
   clientCompany: string;
-  /** Obligatorio si clientCompany es SIDERSA, Acindar o CIPLAR (7 u 8 caracteres alfanuméricos); ignorado si no (AUTO-* correlativo). */
+  /** Obligatorio si clientCompany es Sidersa, Acindar o Sipar (7 u 8 caracteres alfanuméricos); ignorado si no (AUTO-* correlativo). */
   remitoNumber?: string;
 };
 type TripUpdateInput = {
@@ -199,6 +203,7 @@ type TripUpdateInput = {
   routePath?: LatLngExpression[];
   cargo: string;
   plan: string;
+  internalNote?: string;
   scheduledAt: string;
   clientCompany: string;
   remitoNumber?: string;
@@ -566,8 +571,12 @@ function normalizeTripsData(items: PlannedTrip[]) {
       routePath = buildPathForStopCount(routePath, routeStops.length);
     }
     const seed = demoSeedById.get(item.id);
-    const mergedClient = item.clientCompany?.trim() || seed?.clientCompany?.trim() || "";
+    const mergedClient = normalizeClientCompanyDisplay(
+      item.clientCompany?.trim() || seed?.clientCompany?.trim() || "",
+    );
     const mergedRemito = item.remitoNumber?.trim() || seed?.remitoNumber?.trim() || "";
+    const mergedInternalNote =
+      (item as { internalNote?: string }).internalNote?.trim() || seed?.internalNote?.trim() || "";
     return {
       ...alignTripWithStage(item, normalizedStatus),
       zoneId: normalizeZoneId(item.zoneId),
@@ -580,6 +589,7 @@ function normalizeTripsData(items: PlannedTrip[]) {
       status: normalizedStatus,
       clientCompany: mergedClient || "Cliente general",
       remitoNumber: mergedRemito || `REM-${item.id}`,
+      internalNote: mergedInternalNote,
       evidencias,
       origin,
       destination,
@@ -601,13 +611,13 @@ const vehicleDocumentTypes = ["VTV", "Seguro del Vehículo", "Habilitación", "P
 const tripDocumentTypes: TripDocumentType[] = ["Remito", "Ticket", "Gasto", "Otro"];
 
 const initialUsers: AppUser[] = [
-  { id: "USR-01", name: "Admin Principal", email: "admin@transportefighera.com", role: "Administrador", status: "Activo", zoneId: "zona-bsas" },
-  { id: "USR-02", name: "Operador Logística", email: "operador@transportefighera.com", role: "Operador", status: "Activo", zoneId: "zona-cordoba" },
-  { id: "USR-03", name: "Supervisor Rutas", email: "supervisor@transportefighera.com", role: "Supervisor", status: "Activo", zoneId: "zona-santafe" },
-  { id: "driver-juan", name: "Juan Pérez", email: "juan.perez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-bsas" },
-  { id: "USR-05", name: "María González", email: "maria.gonzalez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-cordoba" },
-  { id: "USR-06", name: "Carlos Rodríguez", email: "carlos.rodriguez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-sanjuan" },
-  { id: "USR-07", name: "Diego Fernández", email: "diego.fernandez@transportefighera.com", role: "Chofer", status: "Activo", zoneId: "zona-tucuman" },
+  { id: "USR-01", name: "Admin Principal", email: "admin@transportefighiera.com", role: "Administrador", status: "Activo", zoneId: "zona-bsas" },
+  { id: "USR-02", name: "Operador Logística", email: "operador@transportefighiera.com", role: "Operador", status: "Activo", zoneId: "zona-cordoba" },
+  { id: "USR-03", name: "Supervisor Rutas", email: "supervisor@transportefighiera.com", role: "Supervisor", status: "Activo", zoneId: "zona-santafe" },
+  { id: "driver-juan", name: "Juan Pérez", email: "juan.perez@transportefighiera.com", role: "Chofer", status: "Activo", zoneId: "zona-bsas" },
+  { id: "USR-05", name: "María González", email: "maria.gonzalez@transportefighiera.com", role: "Chofer", status: "Activo", zoneId: "zona-cordoba" },
+  { id: "USR-06", name: "Carlos Rodríguez", email: "carlos.rodriguez@transportefighiera.com", role: "Chofer", status: "Activo", zoneId: "zona-sanjuan" },
+  { id: "USR-07", name: "Diego Fernández", email: "diego.fernandez@transportefighiera.com", role: "Chofer", status: "Activo", zoneId: "zona-tucuman" },
 ];
 
 const initialVehicles: Vehicle[] = [
@@ -698,9 +708,9 @@ const initialDocuments: DocumentRecord[] = [
 ];
 
 const initialAuditLogs: AuditLog[] = [
-  { id: 1, dateTime: "2026-04-28 14:32:15", user: "admin@transportefighera.com", ip: "190.123.45.67", action: "Aprobó viaje #VJ-1008" },
-  { id: 2, dateTime: "2026-04-28 13:18:42", user: "operador@transportefighera.com", ip: "190.123.45.68", action: "Editó perfil de chofer Juan Pérez" },
-  { id: 3, dateTime: "2026-04-28 11:05:33", user: "supervisor@transportefighera.com", ip: "190.123.45.69", action: "Resolvió alerta de desvío #2341" },
+  { id: 1, dateTime: "2026-04-28 14:32:15", user: "admin@transportefighiera.com", ip: "190.123.45.67", action: "Aprobó viaje #VJ-1008" },
+  { id: 2, dateTime: "2026-04-28 13:18:42", user: "operador@transportefighiera.com", ip: "190.123.45.68", action: "Editó perfil de chofer Juan Pérez" },
+  { id: 3, dateTime: "2026-04-28 11:05:33", user: "supervisor@transportefighiera.com", ip: "190.123.45.69", action: "Resolvió alerta de desvío #2341" },
 ];
 
 const initialInvoices: DriverInvoice[] = [
@@ -840,7 +850,7 @@ const initialTrips: PlannedTrip[] = [
     cargo: "Insumos alimenticios - 19 toneladas",
     plan: "Salida 06:00, control en peaje Campana, entrega 17:30.",
     scheduledAt: "2026-04-30T15:00",
-    clientCompany: "SIDERSA",
+    clientCompany: "Sidersa",
     remitoNumber: "4588211",
     timeline: [],
     evidencias: [],
@@ -878,7 +888,7 @@ const initialTrips: PlannedTrip[] = [
     cargo: "Paquetería seca - 8 toneladas",
     plan: "Ruta costera con parada de control a mitad de tramo.",
     scheduledAt: "2026-05-01T09:30",
-    clientCompany: "CIPLAR",
+    clientCompany: "Sipar",
     remitoNumber: "33921001",
     timeline: [],
     evidencias: [],
@@ -916,7 +926,7 @@ const initialTrips: PlannedTrip[] = [
     cargo: "Insumos farmacéuticos - 6 toneladas",
     plan: "Salida 07:30 por corredor sur cordobés.",
     scheduledAt: "2026-05-01T07:30",
-    clientCompany: "SIDERSA",
+    clientCompany: "Sidersa",
     remitoNumber: "8823012",
     timeline: [],
     evidencias: [],
@@ -974,7 +984,7 @@ const initialTrips: PlannedTrip[] = [
     cargo: "Bebidas - 12 toneladas",
     plan: "Entrega en centros de distribución costeros.",
     scheduledAt: "2026-05-02T09:00",
-    clientCompany: "CIPLAR",
+    clientCompany: "Sipar",
     remitoNumber: "11003401",
     timeline: [],
     evidencias: [],
@@ -1013,7 +1023,7 @@ const initialTrips: PlannedTrip[] = [
     cargo: "Cargas generales - 9 toneladas",
     plan: "Consolidación en base Salta y despacho mediodía.",
     scheduledAt: "2026-05-02T13:10",
-    clientCompany: "SIDERSA",
+    clientCompany: "Sidersa",
     remitoNumber: "2200112",
     timeline: [],
     evidencias: [],
@@ -1071,7 +1081,7 @@ const initialTrips: PlannedTrip[] = [
     cargo: "Acero estructural - 21 toneladas",
     plan: "Salida 06:30, control de balanza en peaje Hudson, entrega en depósito principal.",
     scheduledAt: "2026-05-03T06:30",
-    clientCompany: "SIDERSA",
+    clientCompany: "Sidersa",
     remitoNumber: "SRD9123",
     timeline: [],
     evidencias: [],
@@ -1092,10 +1102,10 @@ const initialTrips: PlannedTrip[] = [
     ],
     progress: 0,
     status: "Asignado",
-    cargo: "Referencia SIDERSA — acero en bobinas",
-    plan: "Ejemplo de datos: cliente SIDERSA con plan de carga provisto por la empresa (7 caracteres alfanuméricos). No usar ID AUTO-* para este cliente.",
+    cargo: "Referencia Sidersa — acero en bobinas",
+    plan: "Ejemplo de datos: cliente Sidersa con plan de carga provisto por la empresa (7 caracteres alfanuméricos). No usar ID AUTO-* para este cliente.",
     scheduledAt: "2026-05-04T08:00",
-    clientCompany: "SIDERSA",
+    clientCompany: "Sidersa",
     remitoNumber: "DEMO123",
     timeline: [],
     evidencias: [],
@@ -1471,7 +1481,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
             autoCreatedDriver = {
               id: `DRV-AUTO-${Date.now().toString(36).toUpperCase()}`,
               name: autoDriverName,
-              email: `chofer.auto.${nextDriverIndex}@transportefighera.com`,
+              email: `chofer.auto.${nextDriverIndex}@transportefighiera.com`,
               role: "Chofer",
               status: "Activo",
               zoneId: input.zoneId,
@@ -1534,6 +1544,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           status: hasAssignment ? "Asignado" : "Sin chofer",
           cargo: input.cargo.trim(),
           plan: input.plan.trim(),
+          internalNote: input.internalNote?.trim() || "",
           scheduledAt: input.scheduledAt || new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16),
           clientCompany,
           remitoNumber,
@@ -1562,6 +1573,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
         const stops = input.routeStops.map((s) => String(s).trim()).filter(Boolean);
         const cargo = input.cargo.trim();
         const plan = input.plan.trim();
+        const internalNote = input.internalNote?.trim() || "";
         if (stops.length < 2 || !cargo || !plan) return null;
         const origin = stops[0];
         const destination = stops[stops.length - 1];
@@ -1606,6 +1618,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           routePath,
           cargo,
           plan,
+          internalNote,
           scheduledAt: input.scheduledAt || target.scheduledAt,
           clientCompany,
           remitoNumber,
@@ -1728,7 +1741,7 @@ export function OperationsDataProvider({ children }: { children: ReactNode }) {
           zoneId: input.zoneId,
         };
         updateUsers((prev) => [user, ...prev]);
-        setAuditLogs((prev) => [{ id: prev.length + 1, dateTime: new Date().toLocaleString("sv-SE"), user: "admin@transportefighera.com", ip: "190.123.45.67", action: `Creó usuario ${user.email}` }, ...prev]);
+        setAuditLogs((prev) => [{ id: prev.length + 1, dateTime: new Date().toLocaleString("sv-SE"), user: "admin@transportefighiera.com", ip: "190.123.45.67", action: `Creó usuario ${user.email}` }, ...prev]);
         toast.success(`Usuario ${user.name} creado`);
         return user;
       },

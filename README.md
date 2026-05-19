@@ -1,4 +1,4 @@
-# Transporte Fighera - Prototipos Sincronizados
+# Transporte Fighiera — Prototipos sincronizados
 
 Este repositorio contiene:
 

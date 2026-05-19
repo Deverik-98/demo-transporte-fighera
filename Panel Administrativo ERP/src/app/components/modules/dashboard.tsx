@@ -17,6 +17,7 @@ import {
   type TripOperationsFilters,
 } from "../../lib/trip-operations-filters";
 import { TripOperationsFiltersPanel } from "./trip-operations-filters-panel";
+import { BRAND_NAME } from "../../lib/brand";
 import { formatTripRouteStops } from "../../lib/trip-route";
 import { TripAssignmentModal } from "./trip-assignment-modal";
 import { TripImportModal } from "./trip-import-modal";
@@ -520,7 +521,7 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
           <div className="flex justify-center overflow-auto bg-muted/50 p-4">
             <div className="w-[210mm] min-h-[297mm] bg-white p-6 text-black shadow-lg">
               <div className="mb-4 border-b border-black pb-3">
-                <h2 className="text-xl font-bold">Transportes Fighera — Planilla Operativa</h2>
+                <h2 className="text-xl font-bold">{BRAND_NAME} — Planilla Operativa</h2>
                 <p className="text-sm">Fecha: {new Date().toLocaleDateString("es-AR")}</p>
                 <p className="text-sm">Filtros aplicados: {printFilterLabel}</p>
               </div>
@@ -535,10 +536,10 @@ export function Dashboard({ onOpenAlertsHistory }: { onOpenAlertsHistory?: () =>
                         <thead>
                           <tr>
                             <th className="border border-black px-1 py-1 text-left">ID</th>
-                            <th className="border border-black px-1 py-1 text-left">Fecha</th>
+                            <th className="border border-black px-1 py-1 text-left">Fecha y hora del viaje</th>
                             <th className="border border-black px-1 py-1 text-left">Chofer</th>
                             <th className="border border-black px-1 py-1 text-left">Empresa</th>
-                            <th className="border border-black px-1 py-1 text-left">Nº plan</th>
+                            <th className="border border-black px-1 py-1 text-left">Número de plan de carga</th>
                             <th className="border border-black px-1 py-1 text-left">Camión</th>
                             <th className="border border-black px-1 py-1 text-left">Ruta</th>
                             <th className="border border-black px-1 py-1 text-left">Carga</th>

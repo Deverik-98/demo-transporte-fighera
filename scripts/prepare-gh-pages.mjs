@@ -39,14 +39,14 @@ writeFile(
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Transporte Fighera Prototipos</title>
+    <title>Transporte Fighiera — Prototipos</title>
     <style>
       body { font-family: Arial, sans-serif; padding: 32px; background: #f5f5f5; color: #333; }
       a { display: block; margin: 8px 0; font-size: 18px; }
     </style>
   </head>
   <body>
-    <h1>Transporte Fighera - Prototipos</h1>
+    <h1>Transporte Fighiera — Prototipos</h1>
     <a href="./admin/">Abrir Panel Administrativo</a>
     <a href="./mobile/">Abrir App Movil Choferes</a>
     <p>Importante: abrir ambos desde este mismo dominio para compartir localStorage.</p>

@@ -8,8 +8,8 @@ param(
 
 $root = Split-Path $PSScriptRoot -Parent
 $destinos = @(
-  "$root\Panel Administrativo ERP\src\assets\brand\logo-transporte-fighera.png",
-  "$root\Prototipo App Choferes Transporte\src\assets\brand\logo-transporte-fighera.png",
+  "$root\Panel Administrativo ERP\src\assets\brand\logo-transporte-fighiera.png",
+  "$root\Prototipo App Choferes Transporte\src\assets\brand\logo-transporte-fighiera.png",
   "$root\Panel Administrativo ERP\public\favicon.png",
   "$root\Prototipo App Choferes Transporte\public\favicon.png"
 )

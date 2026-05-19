@@ -39,21 +39,21 @@ export const expirationConfig = [
 ];
 
 export const users = [
-  { id: 1, name: "Admin Principal", email: "admin@transportefighera.com", role: "Administrador", status: "Activo" },
-  { id: 2, name: "Operador Logística", email: "operador@transportefighera.com", role: "Operador", status: "Activo" },
-  { id: 3, name: "Supervisor Rutas", email: "supervisor@transportefighera.com", role: "Supervisor", status: "Activo" },
-  { id: 4, name: "Auditor Externo", email: "auditor@transportefighera.com", role: "Visualizador", status: "Inactivo" },
+  { id: 1, name: "Admin Principal", email: "admin@transportefighiera.com", role: "Administrador", status: "Activo" },
+  { id: 2, name: "Operador Logística", email: "operador@transportefighiera.com", role: "Operador", status: "Activo" },
+  { id: 3, name: "Supervisor Rutas", email: "supervisor@transportefighiera.com", role: "Supervisor", status: "Activo" },
+  { id: 4, name: "Auditor Externo", email: "auditor@transportefighiera.com", role: "Visualizador", status: "Inactivo" },
 ];
 
 export const auditLogs = [
-  { id: 1, dateTime: "2026-04-28 14:32:15", user: "admin@transportefighera.com", ip: "190.123.45.67", action: "Aprobó viaje #VJ-1008" },
-  { id: 2, dateTime: "2026-04-28 13:18:42", user: "operador@transportefighera.com", ip: "190.123.45.68", action: "Editó perfil de chofer Juan Pérez" },
-  { id: 3, dateTime: "2026-04-28 11:05:33", user: "supervisor@transportefighera.com", ip: "190.123.45.69", action: "Resolvió alerta de desvío #2341" },
-  { id: 4, dateTime: "2026-04-28 09:47:22", user: "admin@transportefighera.com", ip: "190.123.45.67", action: "Modificó configuración de vencimientos" },
-  { id: 5, dateTime: "2026-04-27 18:25:11", user: "operador@transportefighera.com", ip: "190.123.45.68", action: "Creó nuevo viaje #VJ-1009" },
-  { id: 6, dateTime: "2026-04-27 16:12:05", user: "admin@transportefighera.com", ip: "190.123.45.67", action: "Desactivó usuario auditor@transportefighera.com" },
-  { id: 7, dateTime: "2026-04-27 14:38:27", user: "supervisor@transportefighera.com", ip: "190.123.45.69", action: "Exportó reporte de costos mensual" },
-  { id: 8, dateTime: "2026-04-27 10:22:19", user: "operador@transportefighera.com", ip: "190.123.45.68", action: "Actualizó estado de viaje #VJ-1003 a Entregado" },
+  { id: 1, dateTime: "2026-04-28 14:32:15", user: "admin@transportefighiera.com", ip: "190.123.45.67", action: "Aprobó viaje #VJ-1008" },
+  { id: 2, dateTime: "2026-04-28 13:18:42", user: "operador@transportefighiera.com", ip: "190.123.45.68", action: "Editó perfil de chofer Juan Pérez" },
+  { id: 3, dateTime: "2026-04-28 11:05:33", user: "supervisor@transportefighiera.com", ip: "190.123.45.69", action: "Resolvió alerta de desvío #2341" },
+  { id: 4, dateTime: "2026-04-28 09:47:22", user: "admin@transportefighiera.com", ip: "190.123.45.67", action: "Modificó configuración de vencimientos" },
+  { id: 5, dateTime: "2026-04-27 18:25:11", user: "operador@transportefighiera.com", ip: "190.123.45.68", action: "Creó nuevo viaje #VJ-1009" },
+  { id: 6, dateTime: "2026-04-27 16:12:05", user: "admin@transportefighiera.com", ip: "190.123.45.67", action: "Desactivó usuario auditor@transportefighiera.com" },
+  { id: 7, dateTime: "2026-04-27 14:38:27", user: "supervisor@transportefighiera.com", ip: "190.123.45.69", action: "Exportó reporte de costos mensual" },
+  { id: 8, dateTime: "2026-04-27 10:22:19", user: "operador@transportefighiera.com", ip: "190.123.45.68", action: "Actualizó estado de viaje #VJ-1003 a Entregado" },
 ];
 
 export const zones = [

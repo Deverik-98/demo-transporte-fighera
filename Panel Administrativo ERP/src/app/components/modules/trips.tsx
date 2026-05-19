@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { MapContainer, Marker, Polyline, TileLayer, useMapEvents } from "react-leaflet";
 import { type LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { BRAND_NAME } from "../../lib/brand";
 import { useOperationsData, PlannedTrip, TripStage, ZoneId } from "../../lib/operations-data";
 import {
   buildFleetKindResolver,
@@ -80,6 +81,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
     routePath: [] as LatLngExpression[],
     cargo: "",
     plan: "",
+    internalNote: "",
     scheduledAt: "",
     clientCompany: "",
     remitoNumber: "",
@@ -348,6 +350,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       routePath: trip.routePath.length >= 2 ? [...trip.routePath] : [],
       cargo: trip.cargo,
       plan: trip.plan,
+      internalNote: trip.internalNote ?? "",
       scheduledAt: trip.scheduledAt,
       clientCompany: trip.clientCompany,
       remitoNumber: trip.remitoNumber,
@@ -430,6 +433,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
       routePath: routePathToSave,
       cargo: editForm.cargo,
       plan: editForm.plan,
+      internalNote: editForm.internalNote,
       scheduledAt: editForm.scheduledAt,
       clientCompany,
       remitoNumber: isPrincipalClientCompany(clientCompany)
@@ -644,17 +648,18 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[1280px] border-collapse text-xs">
+                <table className="w-full min-w-[1480px] border-collapse text-xs">
                   <thead>
                     <tr className="border-b bg-muted/70 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="px-2 py-1.5 text-left">ID Viaje</th>
-                      <th className="px-2 py-1.5 text-left">Fecha</th>
+                      <th className="px-2 py-1.5 text-left">Fecha y hora del viaje</th>
                       <th className="px-2 py-1.5 text-left">Chofer</th>
                       <th className="px-2 py-1.5 text-left">Empresa/Cliente</th>
-                      <th className="px-2 py-1.5 text-left">Nº plan</th>
+                      <th className="px-2 py-1.5 text-left">Número de plan de carga</th>
                       <th className="px-2 py-1.5 text-left">Camión (Tractor)</th>
                       <th className="px-2 py-1.5 text-left">Ruta (paradas)</th>
                       <th className="px-2 py-1.5 text-left">Material/Carga</th>
+                      <th className="px-2 py-1.5 text-left">Obs. interna</th>
                       <th className="px-2 py-1.5 text-left">Estado</th>
                       <th className="px-2 py-1.5 text-left">Incidencias</th>
                       <th className="px-2 py-1.5 text-left">Acciones</th>
@@ -664,7 +669,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                     {groupedByZone.map((zoneGroup) => (
                       <Fragment key={`zone-block-${zoneGroup.zoneId}`}>
                         <tr className="bg-gray-800 text-xs font-semibold uppercase tracking-wide text-gray-100">
-                          <td className="px-2 py-1.5" colSpan={11}>
+                          <td className="px-2 py-1.5" colSpan={12}>
                             Zona: {zoneGroup.zoneName}
                           </td>
                         </tr>
@@ -683,6 +688,9 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               <td className="px-2 py-1.5 font-mono">{trip.vehiclePlate}</td>
                               <td className="max-w-[280px] px-2 py-1.5 leading-snug">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="px-2 py-1.5">{trip.cargo}</td>
+                              <td className="max-w-[240px] px-2 py-1.5 leading-snug text-muted-foreground">
+                                {trip.internalNote?.trim() ? trip.internalNote : "—"}
+                              </td>
                               <td className="px-2 py-1.5">
                                 <Badge variant={statusBadgeVariant(trip.status) as "secondary"}>{trip.status}</Badge>
                               </td>
@@ -789,8 +797,9 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                             <p><span className="font-medium">Patente:</span> {trip.vehiclePlate}</p>
                             <p><span className="font-medium">Empresa:</span> {trip.clientCompany}</p>
                             <p className="font-mono text-[10px] text-muted-foreground">
-                              <span className="font-sans font-medium text-foreground">Nº plan:</span> {trip.remitoNumber}
+                              <span className="font-sans font-medium text-foreground">Número de plan de carga:</span> {trip.remitoNumber}
                             </p>
+                            <p><span className="font-medium">Observación interna:</span> {trip.internalNote?.trim() || "—"}</p>
                             {activeIncidents > 0 ? (
                               <Button
                                 size="sm"
@@ -1182,7 +1191,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Fecha del viaje</label>
+              <label className="text-xs font-medium text-muted-foreground">Fecha y hora del viaje</label>
               <Input type="datetime-local" value={editForm.scheduledAt} onChange={(event) => setEditForm((prev) => ({ ...prev, scheduledAt: event.target.value }))} />
             </div>
             <div className="space-y-1">
@@ -1190,8 +1199,17 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
               <Input value={editForm.cargo} onChange={(event) => setEditForm((prev) => ({ ...prev, cargo: event.target.value }))} />
             </div>
             <div className="space-y-1 sm:col-span-2">
-              <label className="text-xs font-medium text-muted-foreground">Condiciones de viaje</label>
+              <label className="text-xs font-medium text-muted-foreground">Condiciones de viaje / Observaciones (chofer)</label>
               <Textarea value={editForm.plan} onChange={(event) => setEditForm((prev) => ({ ...prev, plan: event.target.value }))} className="min-h-[90px]" />
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <label className="text-xs font-medium text-muted-foreground">Observación interna (solo uso administrativo)</label>
+              <Textarea
+                value={editForm.internalNote}
+                onChange={(event) => setEditForm((prev) => ({ ...prev, internalNote: event.target.value }))}
+                className="min-h-[82px]"
+                placeholder="No visible para choferes. Ej.: tarifa, acuerdos comerciales o notas de control interno."
+              />
             </div>
             </section>
           </div>
@@ -1248,7 +1266,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
           <div className="flex justify-center overflow-auto bg-muted/50 p-4">
             <div className="print-sheet w-[210mm] min-h-[297mm] bg-white p-6 text-black shadow-lg">
               <div className="mb-4 border-b border-black pb-3">
-                <h2 className="text-xl font-bold">Transportes Fighera — Planilla Operativa</h2>
+                <h2 className="text-xl font-bold">{BRAND_NAME} — Planilla Operativa</h2>
                 <p className="text-sm">Fecha: {new Date().toLocaleDateString("es-AR")}</p>
                 <p className="text-sm">Filtros aplicados: {printFilterLabel}</p>
               </div>
@@ -1264,13 +1282,14 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                         <thead>
                           <tr>
                             <th className="border border-black px-1 py-1 text-left">ID</th>
-                            <th className="border border-black px-1 py-1 text-left">Fecha</th>
+                            <th className="border border-black px-1 py-1 text-left">Fecha y hora del viaje</th>
                             <th className="border border-black px-1 py-1 text-left">Chofer</th>
                             <th className="border border-black px-1 py-1 text-left">Empresa</th>
-                            <th className="border border-black px-1 py-1 text-left">Nº plan</th>
+                            <th className="border border-black px-1 py-1 text-left">Número de plan de carga</th>
                             <th className="border border-black px-1 py-1 text-left">Camión</th>
                             <th className="border border-black px-1 py-1 text-left">Ruta</th>
                             <th className="border border-black px-1 py-1 text-left">Carga</th>
+                            <th className="border border-black px-1 py-1 text-left">Obs. interna</th>
                             <th className="border border-black px-1 py-1 text-left">Estado</th>
                           </tr>
                         </thead>
@@ -1285,6 +1304,7 @@ export function Trips({ onFocusTripInMap, onOpenTripDocuments }: TripsProps) {
                               <td className="border border-black px-1 py-1">{trip.vehiclePlate}</td>
                               <td className="border border-black px-1 py-1">{formatTripRouteStops(trip.routeStops, trip.origin, trip.destination)}</td>
                               <td className="border border-black px-1 py-1">{trip.cargo}</td>
+                              <td className="border border-black px-1 py-1">{trip.internalNote?.trim() || "—"}</td>
                               <td className="border border-black px-1 py-1">{trip.status}</td>
                             </tr>
                           ))}

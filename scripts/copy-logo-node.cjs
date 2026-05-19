@@ -30,8 +30,8 @@ if (!src) {
 }
 
 const dests = [
-  path.join(root, "Panel Administrativo ERP", "src", "assets", "brand", "logo-transporte-fighera.png"),
-  path.join(root, "Prototipo App Choferes Transporte", "src", "assets", "brand", "logo-transporte-fighera.png"),
+  path.join(root, "Panel Administrativo ERP", "src", "assets", "brand", "logo-transporte-fighiera.png"),
+  path.join(root, "Prototipo App Choferes Transporte", "src", "assets", "brand", "logo-transporte-fighiera.png"),
   path.join(root, "Panel Administrativo ERP", "public", "favicon.png"),
   path.join(root, "Prototipo App Choferes Transporte", "public", "favicon.png"),
 ];

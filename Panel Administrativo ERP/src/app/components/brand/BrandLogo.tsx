@@ -1,5 +1,6 @@
 import { cn } from "../ui/utils";
-import logoTransporteFighera from "../../../assets/brand/logo-transporte-fighera.png";
+import { BRAND_LEGAL_NAME } from "../../lib/brand";
+import logoTransporteFighiera from "../../../assets/brand/logo-transporte-fighiera.png";
 
 export type BrandLogoVariant = "full" | "compact" | "header-light";
 
@@ -16,13 +17,13 @@ type BrandLogoProps = {
   priority?: boolean;
 };
 
-/** Logo oficial (PNG). Archivo: src/assets/brand/logo-transporte-fighera.png */
+/** Logo oficial (PNG). Archivo: src/assets/brand/logo-transporte-fighiera.png */
 export function BrandLogo({ variant = "full", className, imgClassName, priority = false }: BrandLogoProps) {
   return (
     <span className={cn("inline-flex shrink-0 items-center", className)}>
       <img
-        src={logoTransporteFighera}
-        alt="Transporte Fighera S.R.L."
+        src={logoTransporteFighiera}
+        alt={BRAND_LEGAL_NAME}
         width={200}
         height={48}
         className={cn("object-contain object-left", sizeClasses[variant], imgClassName)}

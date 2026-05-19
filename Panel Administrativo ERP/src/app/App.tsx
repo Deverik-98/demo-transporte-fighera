@@ -31,6 +31,7 @@ import { OperationsDataProvider, useOperationsData, UserRole } from "./lib/opera
 import { Toaster } from "./components/ui/sonner";
 import { canAccess } from "./components/auth/RbacGuard";
 import { BrandLogo } from "./components/brand/BrandLogo";
+import { BRAND_NAME } from "./lib/brand";
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -130,7 +131,7 @@ function AppContent() {
           </Button>
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <BrandLogo variant="compact" priority className="shrink-0" />
-            <h1 className="truncate text-xl font-semibold">Transporte Fighera</h1>
+            <h1 className="truncate text-xl font-semibold">{BRAND_NAME}</h1>
             <Badge variant="secondary" className="hidden shrink-0 sm:inline-flex">ERP Logístico</Badge>
           </div>
         </div>

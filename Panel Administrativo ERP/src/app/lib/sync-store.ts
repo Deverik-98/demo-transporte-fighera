@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { LatLngExpression } from "leaflet";
+import { normalizeClientCompanyDisplay } from "./trip-clients";
 
 export type SyncZoneId = string;
 export type SyncTripStatus =
@@ -26,6 +27,8 @@ export type SyncTrip = {
   status: SyncTripStatus;
   cargo: string;
   plan: string;
+  /** Uso interno en panel admin (no visible para choferes). */
+  internalNote?: string;
   scheduledAt: string;
   clientCompany?: string;
   /** Plan de carga alfanumérico (clientes con nomenclatura, longitud fija) o ID correlativo AUTO-* (`remitoNumber` en JSON). */
@@ -78,8 +81,9 @@ export function filterAlertsByFleetDocumentationPolicy<
   });
 }
 
-/** v2: seed con clientes principales (SIDERSA/Acindar/CIPLAR) y planes de carga manuales; migrar desde v1 vaciando esta clave. */
-export const TRIPS_KEY = "tf_sync_trips_v2";
+const LEGACY_TRIPS_KEY = "tf_sync_trips_v2";
+/** v3: nombres de clientes Sidersa / Acindar / Sipar y datos con ortografía actualizada. */
+export const TRIPS_KEY = "tf_sync_trips_v3";
 export const ALERTS_KEY = "tf_sync_alerts_v3";
 export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
@@ -119,10 +123,29 @@ function writeJson<T>(key: string, value: T) {
   }
 }
 
+function normalizeTripsForStorage(trips: SyncTrip[]): SyncTrip[] {
+  return trips.map((trip) => ({
+    ...trip,
+    clientCompany: trip.clientCompany ? normalizeClientCompanyDisplay(trip.clientCompany) : trip.clientCompany,
+  }));
+}
+
+function loadTripsWithMigration(): SyncTrip[] {
+  const current = readJson<SyncTrip[]>(TRIPS_KEY, []);
+  if (current.length) return normalizeTripsForStorage(current);
+  const legacy = readJson<SyncTrip[]>(LEGACY_TRIPS_KEY, []);
+  if (legacy.length) {
+    const migrated = normalizeTripsForStorage(legacy);
+    writeJson(TRIPS_KEY, migrated);
+    return migrated;
+  }
+  return [];
+}
+
 export function initSyncStore(seedTrips: SyncTrip[], seedAlerts: SyncAlert[]) {
-  const trips = readJson<SyncTrip[]>(TRIPS_KEY, []);
+  const trips = loadTripsWithMigration();
   const alerts = readJson<SyncAlert[]>(ALERTS_KEY, []);
-  if (!trips.length) writeJson(TRIPS_KEY, seedTrips);
+  if (!trips.length) writeJson(TRIPS_KEY, normalizeTripsForStorage(seedTrips));
   if (!alerts.length) writeJson(ALERTS_KEY, seedAlerts);
 }
 
@@ -132,11 +155,11 @@ export function initSyncCollection<T>(key: string, seed: T[]) {
 }
 
 export function getSyncTrips() {
-  return readJson<SyncTrip[]>(TRIPS_KEY, []);
+  return normalizeTripsForStorage(readJson<SyncTrip[]>(TRIPS_KEY, []));
 }
 
 export function setSyncTrips(next: SyncTrip[]) {
-  writeJson(TRIPS_KEY, next);
+  writeJson(TRIPS_KEY, normalizeTripsForStorage(next));
 }
 
 export function getSyncAlerts() {

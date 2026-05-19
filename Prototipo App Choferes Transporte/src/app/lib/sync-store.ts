@@ -24,6 +24,8 @@ export type SyncTrip = {
   status: SyncTripStatus;
   cargo: string;
   plan: string;
+  /** Uso interno en panel admin; se preserva para no perderlo al sincronizar. */
+  internalNote?: string;
   scheduledAt: string;
   clientCompany?: string;
   /** Plan de carga alfanumérico (clientes con nomenclatura, longitud fija) o ID correlativo AUTO-* (`remitoNumber` en JSON). */
@@ -58,7 +60,37 @@ export type SyncAlert = {
   resolvedAt?: string;
 };
 
-export const TRIPS_KEY = "tf_sync_trips_v2";
+const LEGACY_TRIPS_KEY = "tf_sync_trips_v2";
+export const TRIPS_KEY = "tf_sync_trips_v3";
+
+function normalizeClientCompanyDisplay(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  const lower = trimmed.toLowerCase();
+  if (lower === "sidersa") return "Sidersa";
+  if (lower === "acindar") return "Acindar";
+  if (lower === "ciplar" || lower === "sipar") return "Sipar";
+  return trimmed;
+}
+
+function normalizeTripsForStorage(trips: SyncTrip[]): SyncTrip[] {
+  return trips.map((trip) => ({
+    ...trip,
+    clientCompany: trip.clientCompany ? normalizeClientCompanyDisplay(trip.clientCompany) : trip.clientCompany,
+  }));
+}
+
+function loadTripsWithMigration(): SyncTrip[] {
+  const current = readJson<SyncTrip[]>(TRIPS_KEY, []);
+  if (current.length) return normalizeTripsForStorage(current);
+  const legacy = readJson<SyncTrip[]>(LEGACY_TRIPS_KEY, []);
+  if (legacy.length) {
+    const migrated = normalizeTripsForStorage(legacy);
+    writeJson(TRIPS_KEY, migrated);
+    return migrated;
+  }
+  return [];
+}
 export const ALERTS_KEY = "tf_sync_alerts_v3";
 export const USERS_KEY = "tf_sync_users_v1";
 export const VEHICLES_KEY = "tf_sync_vehicles_v1";
@@ -97,11 +129,13 @@ function writeJson<T>(key: string, value: T) {
 }
 
 export function getSyncTrips() {
-  return readJson<SyncTrip[]>(TRIPS_KEY, []);
+  const trips = loadTripsWithMigration();
+  if (trips.length) return trips;
+  return normalizeTripsForStorage(readJson<SyncTrip[]>(TRIPS_KEY, []));
 }
 
 export function setSyncTrips(next: SyncTrip[]) {
-  writeJson(TRIPS_KEY, next);
+  writeJson(TRIPS_KEY, normalizeTripsForStorage(next));
 }
 
 export function getSyncAlerts() {
